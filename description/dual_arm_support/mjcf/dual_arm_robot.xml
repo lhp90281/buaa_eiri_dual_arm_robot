@@ -59,17 +59,17 @@
             <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_4"/>
             <body name="left_link_5" pos="0 -0.24 0" quat="0.707107 -0.707107 0 0">
               <inertial pos="0.00030571 0.00111778 0.084532" quat="0.706765 0.00522851 -0.00118624 0.707428" mass="0.229104" diaginertia="0.000171897 0.000128733 8.33708e-05"/>
-              <joint name="left_joint_4" pos="0 0 0" axis="0 0 -1" range="-2.5307 2.5307" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+              <joint name="left_joint_4" pos="0 0 0" axis="0 0 -1" range="-2.5307 2.5307" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_5"/>
               <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_5"/>
               <body name="left_link_6" quat="0.707105 0.707108 0 0">
                 <inertial pos="-0.00109259 -0.000479736 -0.000148199" quat="0.999946 0.00787319 -0.00671394 -0.000378731" mass="0.139362" diaginertia="6.49636e-05 4.73539e-05 4.56171e-05"/>
-                <joint name="left_joint_5" pos="0 0 0" axis="0 0 1" range="-0.6981 0.6981" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+                <joint name="left_joint_5" pos="0 0 0" axis="0 0 1" range="-0.6981 0.6981" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
                 <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_6"/>
                 <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_6"/>
                 <body name="left_link_7" quat="0.499998 0.5 -0.500002 -0.5">
                   <inertial pos="0.00931538 0.000159273 0.0625024" quat="0.696097 -0.128271 -0.126624 0.694955" mass="0.198842" diaginertia="0.000451229 0.000421109 9.25725e-05"/>
-                  <joint name="left_joint_6" pos="0 0 0" axis="0 0 -1" range="-1.5708 1.5708" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+                  <joint name="left_joint_6" pos="0 0 0" axis="0 0 -1" range="-1.5708 1.5708" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
                   <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_7"/>
                   <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_7"/>
                   <geom pos="0.06 0 0" quat="0.499998 0.5 0.500002 0.5" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.79216 0.81961 0.93333 1" mesh="gripper_base_link"/>
@@ -150,4 +150,32 @@
       </body>
     </body>
   </worldbody>
+  <equality>
+    <joint joint1="left_gripper_right_finger_joint" joint2="left_gripper_left_finger_joint" polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001 0.5 2" solref="0.005 1"/>
+    
+    <joint joint1="right_gripper_right_finger_joint" joint2="right_gripper_left_finger_joint" polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001 0.5 2" solref="0.005 1"/>
+  </equality>
+  <actuator>
+    <motor name="act_left_j0" joint="left_joint_0" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_left_j1" joint="left_joint_1" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_left_j2" joint="left_joint_2" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_left_j3" joint="leftt_joint_3" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_left_j4" joint="left_joint_4" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_left_j5" joint="left_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_left_j6" joint="left_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+
+    <motor name="act_left_gripper_right" joint="left_gripper_right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80"/>
+    
+
+    <motor name="act_right_j0" joint="right_joint_0" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_right_j1" joint="right_joint_1" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_right_j2" joint="right_joint_2" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_right_j3" joint="right_joint_3" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_right_j4" joint="right_joint_4" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_right_j5" joint="right_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_right_j6" joint="right_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+
+    <motor name="act_right_gripper_right" joint="right_gripper_right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80"/>
+    
+  </actuator>
 </mujoco>

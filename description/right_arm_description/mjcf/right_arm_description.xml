@@ -58,4 +58,13 @@
       </body>
     </body>
   </worldbody>
+  <actuator>
+    <motor name="act_right_j0" joint="right_joint_0" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_right_j1" joint="right_joint_1" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_right_j2" joint="right_joint_2" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_right_j3" joint="right_joint_3" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_right_j4" joint="right_joint_4" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_right_j5" joint="right_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_right_j6" joint="right_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+  </actuator>
 </mujoco>

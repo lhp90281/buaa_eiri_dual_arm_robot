@@ -23,4 +23,10 @@
       <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="left_finger"/>
     </body>
   </worldbody>
+  <equality>
+    <joint joint1="right_finger_joint" joint2="left_finger_joint" polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001 0.5 2" solref="0.005 1"/>
+  </equality>
+  <actuator>
+    <motor name="act_finger_right" joint="right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80"/>
+  </actuator>
 </mujoco>

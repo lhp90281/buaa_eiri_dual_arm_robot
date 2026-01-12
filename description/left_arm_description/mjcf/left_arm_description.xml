@@ -32,22 +32,22 @@
           <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_3"/>
           <body name="left_link_4" quat="0.707105 0.707108 0 0">
             <inertial pos="0.000110401 -0.0670069 0.000940172" quat="0.49688 0.504926 -0.503894 0.494218" mass="0.192196" diaginertia="0.000152992 0.000139242 7.39065e-05"/>
-            <joint name="leftt_joint_3" pos="0 0 0" axis="0 0 1" range="-2.0944 1.4835" actuatorfrcrange="-27 27" damping="0.1" frictionloss="0.1"/>
+            <joint name="left_joint_3" pos="0 0 0" axis="0 0 1" range="-2.0944 1.4835" actuatorfrcrange="-27 27" damping="0.1" frictionloss="0.1"/>
             <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_4"/>
             <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_4"/>
             <body name="left_link_5" pos="0 -0.24 0" quat="0.707107 -0.707107 0 0">
               <inertial pos="0.00030571 0.00111778 0.084532" quat="0.706765 0.00522851 -0.00118624 0.707428" mass="0.229104" diaginertia="0.000171897 0.000128733 8.33708e-05"/>
-              <joint name="left_joint_4" pos="0 0 0" axis="0 0 -1" range="-2.5307 2.5307" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+              <joint name="left_joint_4" pos="0 0 0" axis="0 0 -1" range="-2.5307 2.5307" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_5"/>
               <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_5"/>
               <body name="left_link_6" quat="0.707105 0.707108 0 0">
                 <inertial pos="-0.00109259 -0.000479736 -0.000148199" quat="0.999946 0.00787319 -0.00671394 -0.000378731" mass="0.139362" diaginertia="6.49636e-05 4.73539e-05 4.56171e-05"/>
-                <joint name="left_joint_5" pos="0 0 0" axis="0 0 1" range="-0.6981 0.6981" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+                <joint name="left_joint_5" pos="0 0 0" axis="0 0 1" range="-0.6981 0.6981" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
                 <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_6"/>
                 <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_6"/>
                 <body name="left_link_7" quat="0.499998 0.5 -0.500002 -0.5">
                   <inertial pos="0.0286842 0 0.00370679" quat="0.498332 0.501662 0.501662 0.498332" mass="0.0645715" diaginertia="2.08555e-05 1.97083e-05 1.62467e-05"/>
-                  <joint name="left_joint_6" pos="0 0 0" axis="0 0 -1" range="-1.5708 1.5708" actuatorfrcrange="-12.5 12.5" damping="0.1" frictionloss="0.1"/>
+                  <joint name="left_joint_6" pos="0 0 0" axis="0 0 -1" range="-1.5708 1.5708" actuatorfrcrange="-7 7" damping="0.1" frictionloss="0.1"/>
                   <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_7"/>
                   <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="left_link_7"/>
                 </body>
@@ -58,4 +58,13 @@
       </body>
     </body>
   </worldbody>
+  <actuator>
+    <motor name="act_left_j0" joint="left_joint_0" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_left_j1" joint="left_joint_1" gear="1" ctrllimited="true" ctrlrange="-40 40"/>
+    <motor name="act_left_j2" joint="left_joint_2" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_left_j3" joint="left_joint_3" gear="1" ctrllimited="true" ctrlrange="-27 27"/>
+    <motor name="act_left_j4" joint="left_joint_4" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_left_j5" joint="left_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+    <motor name="act_left_j6" joint="left_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7"/>
+  </actuator>
 </mujoco>
