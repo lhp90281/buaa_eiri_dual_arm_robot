@@ -1,0 +1,26 @@
+<mujoco model="gripper_description">
+  <compiler angle="radian" meshdir="../meshes/"/>
+
+  <asset>
+    <mesh name="gripper_base_link" file="gripper_base_link.STL"/>
+    <mesh name="right_finger" file="right_finger.STL"/>
+    <mesh name="left_finger" file="left_finger.STL"/>
+  </asset>
+
+  <worldbody>
+    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.79216 0.81961 0.93333 1" mesh="gripper_base_link"/>
+    <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="gripper_base_link"/>
+    <body name="right_finger" pos="-0.065 0 0.079">
+      <inertial pos="0.0034569 0.0014257 -0.003385" quat="0.49926 0.449182 0.332763 0.662" mass="0.045391" diaginertia="1.40631e-05 1.3695e-05 9.79589e-06"/>
+      <joint name="right_finger_joint" pos="0 0 0" axis="1 0 0" type="slide" range="0 0.045" actuatorfrcrange="-80 80" damping="0.1" frictionloss="0.1"/>
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.79216 0.81961 0.93333 1" mesh="right_finger"/>
+      <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="right_finger"/>
+    </body>
+    <body name="left_finger" pos="0.065 0 0.079">
+      <inertial pos="-0.0034569 -0.0014257 -0.003385" quat="0.449182 0.49926 0.662 0.332763" mass="0.045391" diaginertia="1.40631e-05 1.3695e-05 9.79589e-06"/>
+      <joint name="left_finger_joint" pos="0 0 0" axis="-1 0 0" type="slide" range="0 0.045" actuatorfrcrange="-80 80" damping="0.1" frictionloss="0.1"/>
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.79216 0.81961 0.93333 1" mesh="left_finger"/>
+      <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="left_finger"/>
+    </body>
+  </worldbody>
+</mujoco>
