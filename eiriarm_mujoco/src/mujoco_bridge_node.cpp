@@ -25,6 +25,7 @@ std::map<std::string, int> actuator_map;
 
 int main(int argc, char** argv)
 {
+    printf("\n\n====== [DEBUG] MUJOCO BRIDGE V2.0 STARTING ======\n\n");
     rclcpp::init(argc, argv);
     auto node = std::make_shared<rclcpp::Node>("mujoco_bridge");
 
@@ -34,7 +35,13 @@ int main(int argc, char** argv)
     node->get_parameter("model_file", model_file_path);
 
     if (model_file_path.empty()) {
-        RCLCPP_ERROR(node->get_logger(), "Parameter 'model_file' is empty.");
+        RCLCPP_ERROR(node->get_logger(), "Parameter 'model_file' is empty. Please check your launch file.");
+        return 1;
+    }
+    
+    // Safety check: Does file exist?
+    if (!std::filesystem::exists(model_file_path)) {
+        RCLCPP_ERROR(node->get_logger(), "Model file NOT found at: %s", model_file_path.c_str());
         return 1;
     }
 
@@ -43,24 +50,28 @@ int main(int argc, char** argv)
     std::string model_dir = p.parent_path().string();
     std::string model_filename = p.filename().string();
     
-    RCLCPP_INFO(node->get_logger(), "Changing dir to: %s", model_dir.c_str());
+    RCLCPP_INFO(node->get_logger(), "Loading model: %s", model_filename.c_str());
+    RCLCPP_INFO(node->get_logger(), "Switching working directory to: %s", model_dir.c_str());
+    
     if (chdir(model_dir.c_str()) != 0) {
-        RCLCPP_ERROR(node->get_logger(), "Failed to change directory");
+        RCLCPP_ERROR(node->get_logger(), "Failed to change directory to %s", model_dir.c_str());
         return 1;
     }
     
     char error[1000] = "Could not load binary model";
+    // Check if m is loaded successfully
     m = mj_loadXML(model_filename.c_str(), 0, error, 1000);
     if (!m) {
         RCLCPP_ERROR(node->get_logger(), "Load model error: %s", error);
         return 1;
     }
+    
     d = mj_makeData(m);
     if (!d) {
         RCLCPP_ERROR(node->get_logger(), "Failed to create mjData");
         return 1;
     }
-    RCLCPP_INFO(node->get_logger(), "MuJoCo loaded. nq=%d, nv=%d", m->nq, m->nv);
+    RCLCPP_INFO(node->get_logger(), "MuJoCo loaded successfully. nq=%d, nv=%d", m->nq, m->nv);
 
     // 3. Init Maps
     if (m->nu > 0) {
@@ -68,7 +79,9 @@ int main(int argc, char** argv)
             const char* name = mj_id2name(m, mjOBJ_ACTUATOR, i);
             if (name) {
                 actuator_map[std::string(name)] = i;
-                int joint_id = m->actuator_trnid[i * 2];
+                // Note: This mapping assumes simple transmission. 
+                // For complex robots, verify trnid logic.
+                int joint_id = m->actuator_trnid[i * 2]; 
                 if (joint_id >= 0 && joint_id < m->njnt) {
                     const char* joint_name = mj_id2name(m, mjOBJ_JOINT, joint_id);
                     if (joint_name) joint_to_actuator_map[std::string(joint_name)] = i;
@@ -97,9 +110,6 @@ int main(int argc, char** argv)
     auto sub = node->create_subscription<sensor_msgs::msg::JointState>(
         "/ctrl/effort", 10,
         [&](const sensor_msgs::msg::JointState::SharedPtr msg) {
-            // Simple logic: direct write to d->ctrl. 
-            // Since this runs in spin_some() on the main thread, it is SEQUENTIAL with mj_step.
-            // No mutex needed!
             if (msg->name.size() != msg->effort.size()) return;
             for (size_t i = 0; i < msg->name.size(); ++i) {
                 const auto& name = msg->name[i];

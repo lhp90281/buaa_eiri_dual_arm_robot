@@ -227,7 +227,7 @@
       </geometry>
     </collision>
   </link>
-  <joint name="leftt_joint_3" type="revolute">
+  <joint name="left_joint_3" type="revolute">
     <origin rpy="1.5708 0 0" xyz="0 0 0"/>
     <parent link="left_link_3"/>
     <child link="left_link_4"/>
