@@ -1,93 +1,106 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     
-    # Declare launch arguments
-    declared_arguments = []
-    declared_arguments.append(
+    # 1. 配置参数
+    declared_arguments = [
         DeclareLaunchArgument(
             "use_rviz",
-            default_value="False",
+            default_value="True",
             description="Whether to start RViz"
         )
-    )
-    
+    ]
     use_rviz = LaunchConfiguration("use_rviz")
 
-    # 1. 获取功能包路径 (自动寻找安装位置，不再硬编码路径)
-    try:
-        support_package_path = get_package_share_directory('dual_arm_support')
-    except Exception as e:
-        print("Error: Could not find package 'dual_arm_support'. Please make sure it is built and sourced.")
-        raise e
-    
-    # 2. 构建文件的绝对路径
-    mjcf_path = os.path.join(support_package_path, 'mjcf', 'dual_arm_robot.xml')
-    urdf_path = os.path.join(support_package_path, 'urdf', 'dual_arm_robot.urdf')
+    # 2. 动态生成 Robot Description (URDF)
+    # 关键修改：使用 Command + xacro，而不是直接读取文件
+    robot_description_content = Command(
+        [
+            PathJoinSubstitution([FindExecutable(name="xacro")]),
+            " ",
+            PathJoinSubstitution(
+                [FindPackageShare("dual_arm_support"), "urdf", "dual_arm_robot.urdf.xacro"]
+            ),
+        ]
+    )
+    robot_description = {"robot_description": robot_description_content}
 
-    # 3. 读取 URDF 内容
-    robot_desc = ""
-    if os.path.exists(urdf_path):
-        with open(urdf_path, 'r') as inf:
-            robot_desc = inf.read()
-    else:
-        print(f"[ERROR] URDF not found at {urdf_path}")
-
-    # MuJoCo Bridge Node
-    mujoco_node = Node(
-        package='eiriarm_mujoco',
-        executable='mujoco_bridge_node.py',  # Switch to Python script
-        name='mujoco_bridge',
-        output='screen',
-        parameters=[{
-            'model_file': mjcf_path,
-            'use_sim_time': False
-        }]
+    # 3. 控制器配置文件路径
+    # 注意：你需要创建这个 yaml 文件（见下文）
+    robot_controllers = PathJoinSubstitution(
+        [
+            FindPackageShare("eiriarm_bringup"),
+            "config",
+            "controllers.yaml",
+        ]
     )
 
-    # Robot State Publisher
-    rsp_node = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
-        output='screen',
-        parameters=[{
-            'robot_description': robot_desc,
-            'use_sim_time': False # Bridge 使用系统时间 node->now()，所以这里设为 False
-        }]
+    # 4. 核心节点：ros2_control_node (Controller Manager)
+    # 它会加载你的 C++ MujocoHardware 插件
+    control_node = Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[robot_description, robot_controllers],
+        output="screen",
     )
 
-    # RViz (Conditional)
-    rviz_config_file = os.path.join(
-        get_package_share_directory('eiriarm_bringup'),
-        'rviz',
-        'simulation.rviz'  # Assuming you might have one, or use default
+    # 5. Robot State Publisher
+    robot_state_pub_node = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="both",
+        parameters=[robot_description],
     )
-    
-    # If no config file exists, just run rviz2 without -d
-    if os.path.exists(rviz_config_file):
-        rviz_args = ['-d', rviz_config_file]
-    else:
-        rviz_args = []
 
+    # 6. 加载控制器 (Spawners)
+    # 6.1 加载 joint_state_broadcaster (用于发布 /joint_states)
+    joint_state_broadcaster_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
+    )
+
+    # 6.2 加载你的双臂控制器 (假设名字叫 joint_trajectory_controller)
+    # 我们使用延时启动，确保 broadcaster 先启动
+    robot_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_trajectory_controller", "--controller-manager", "/controller_manager"],
+    )
+
+    # 7. RViz (可选)
+    rviz_config_file = PathJoinSubstitution(
+        [FindPackageShare("dual_arm_support"), "config", "robot.rviz"]
+    )
     rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        output='screen',
-        arguments=rviz_args,
-        condition=IfCondition(use_rviz)
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="log",
+        arguments=["-d", rviz_config_file],
+        condition=None, # 你可以使用 IfCondition(use_rviz)
     )
 
+    # 8. 定义启动顺序
+    # 确保 control_node 启动后才加载 broadcaster
+    # 确保 broadcaster 启动后才加载 robot_controller
     nodes = [
-        mujoco_node,
-        rsp_node,
+        control_node,
+        robot_state_pub_node,
+        joint_state_broadcaster_spawner,
+        RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[robot_controller_spawner],
+            )
+        ),
         rviz_node
     ]
 

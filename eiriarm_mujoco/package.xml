@@ -3,18 +3,23 @@
 <package format="3">
   <name>eiriarm_mujoco</name>
   <version>0.0.1</version>
-  <description>MuJoCo bridge for EiriArm</description>
+  <description>The eiriarm_mujoco package with ros2_control hardware interface</description>
   <maintainer email="user@todo.todo">user</maintainer>
-  <license>Apache-2.0</license>
+  <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
-  <depend>ament_index_cpp</depend>
+  
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp_lifecycle</depend>
+  
+  <depend>mujoco</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/eiriarm_mujoco_hardware.xml"/>
   </export>
 </package>
