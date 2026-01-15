@@ -69,10 +69,17 @@ def generate_launch_description():
 
     # 6.2 加载你的双臂控制器 (假设名字叫 joint_trajectory_controller)
     # 我们使用延时启动，确保 broadcaster 先启动
+    # robot_controller_spawner = Node(
+    #     package="controller_manager",
+    #     executable="spawner",
+    #     arguments=["joint_trajectory_controller", "--controller-manager", "/controller_manager"],
+    # )
+    
+    # 6.2 加载 forward_command_controller (用于简单的 effort 测试)
     robot_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_trajectory_controller", "--controller-manager", "/controller_manager"],
+        arguments=["forward_effort_controller", "--controller-manager", "/controller_manager"],
     )
 
     # 7. RViz (可选)
