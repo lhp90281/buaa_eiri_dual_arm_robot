@@ -29,4 +29,5 @@
   <actuator>
     <motor name="act_finger_right" joint="right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80"/>
   </actuator>
+
 </mujoco>
