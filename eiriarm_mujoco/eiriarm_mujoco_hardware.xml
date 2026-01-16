@@ -1,7 +1,0 @@
-<library path="eiriarm_mujoco_hardware">
-  <class name="eiriarm_mujoco/MujocoHardware" type="eiriarm_mujoco::MujocoHardware" base_class_type="hardware_interface::SystemInterface">
-    <description>
-      Embedded MuJoCo simulation hardware interface for EIRI Dual Arm.
-    </description>
-  </class>
-</library>

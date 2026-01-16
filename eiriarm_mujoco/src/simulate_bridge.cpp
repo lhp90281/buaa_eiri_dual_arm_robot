@@ -67,13 +67,6 @@ void SimulateBridge::JointCommandSubCallBack(const sensor_msgs::msg::JointState:
 
     // 如果模型不符合需求,则不执行操作
     if(modelParam_.readErrorFlag) return;
-    // 收到的命令长度与模型关节数不匹配时进行处理
-    // if(jointCommand->effort.size() > (size_t)mj_model_->nu){
-    //     RCLCPP_ERROR(this->get_logger(), "命令长度大于模型关节数,请检查");
-    //     return; 
-    // }
-    // // 将命令值保存到成员变量
-    // jointCommands_ = *jointCommand;
     
     // 建立临时名字到ID映射，如果还没有的话 (或者可以存成成员变量优化)
     static std::map<std::string, int> jointNameToIdx;

@@ -36,30 +36,6 @@ find_package(tf2_ros REQUIRED)
 include_directories(include)
 
 # ==========================================================
-# 核心修改：明确指定库名为 eiriarm_mujoco_hardware
-# ==========================================================
-add_library(eiriarm_mujoco_hardware SHARED
-  src/mujoco_hardware.cpp
-)
-
-target_link_libraries(eiriarm_mujoco_hardware
-  ${MUJOCO_LIB_DIR}
-)
-
-target_include_directories(eiriarm_mujoco_hardware PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${MUJOCO_INCLUDE_DIR}
-)
-
-ament_target_dependencies(eiriarm_mujoco_hardware
-  rclcpp
-  rclcpp_lifecycle
-  hardware_interface
-  pluginlib
-)
-
-# ==========================================================
 # Simulate UI Node
 # ==========================================================
 aux_source_directory(src/demo SIMULATE_SOURCES)
@@ -100,15 +76,13 @@ ament_target_dependencies(simulate
   "tf2_ros"
 )
 
-pluginlib_export_plugin_description_file(hardware_interface eiriarm_mujoco_hardware.xml)
-
 # ==========================================================
 # 安装规则
 # ==========================================================
 
 # 这里的 TARGETS 名字也要对应修改
 install(
-  TARGETS eiriarm_mujoco_hardware simulate
+  TARGETS simulate
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -123,11 +97,6 @@ install(
 install(
   DIRECTORY include/
   DESTINATION include
-)
-
-install(
-  FILES eiriarm_mujoco_hardware.xml
-  DESTINATION share/${PROJECT_NAME}
 )
 
 if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
