@@ -114,18 +114,18 @@ private:
             // Gravity torque
             double gravity_torque = data_->g[idx_v];
 
-            // Debug print for first few joints to analyze gravity compensation distribution
-            if (name.find("left_joint_") != std::string::npos) {
-                int joint_num = -1;
-                try {
-                    joint_num = std::stoi(name.substr(11)); // "left_joint_" is 11 chars
-                } catch (...) {}
+            // // Debug print for first few joints to analyze gravity compensation distribution
+            // if (name.find("left_joint_") != std::string::npos) {
+            //     int joint_num = -1;
+            //     try {
+            //         joint_num = std::stoi(name.substr(11)); // "left_joint_" is 11 chars
+            //     } catch (...) {}
                 
-                if (joint_num >= 0 && joint_num <= 5) {
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500, 
-                        "Joint %s (idx_v=%d) Gravity Torque: %f (Gain: %.2f)", name.c_str(), idx_v, gravity_torque, gravity_gain_);
-                }
-            }
+            //     if (joint_num >= 0 && joint_num <= 5) {
+            //         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500, 
+            //             "Joint %s (idx_v=%d) Gravity Torque: %f (Gain: %.2f)", name.c_str(), idx_v, gravity_torque, gravity_gain_);
+            //     }
+            // }
 
             effort_msg.name.push_back(name);
             effort_msg.effort.push_back(gravity_torque);

@@ -1,0 +1,57 @@
+joint_impedance_controller:
+  ros__parameters:
+    control_frequency: 500.0  # Match simulation better
+    stiffness: 8.0   # Soft default for compliant behavior
+    damping: 3.0     # Higher damping now that velocity saturation is removed
+    max_effort: 50.0 # Global torque limit (Nm), per-joint limits from URDF
+    position_error_limit: 0.3 # ~17 degrees, allow more range for compliance
+    velocity_filter_alpha: 0.99  # Very strong filtering like Franka
+    velocity_saturation: 100.0  # Effectively disabled, adaptive damping handles limits
+    
+    # Per-joint gains - Tuned for real motor damping (0.25 Nm·s/rad)
+    # Max torque = Kp*0.3 + Kd*v_max + grav_max must stay under limit
+    # Joint 0-1: 40Nm, Joint 2-3: 27Nm, Joint 4-6: 7Nm
+    gains:
+      left_joint_0:
+        stiffness: 30.0  # Base joint (40Nm limit)
+        damping: 4.0
+      left_joint_1:
+        stiffness: 30.0  # Shoulder (40Nm limit) - needs higher for gravity
+        damping: 4.0
+      left_joint_2:
+        stiffness: 15.0  # Elbow (27Nm limit) - reduced to leave more margin for damping
+        damping: 5.0     # High damping to keep velocity < 10 rad/s
+      left_joint_3:
+        stiffness: 20.0  # Wrist (27Nm limit)
+        damping: 3.0
+      left_joint_4:
+        stiffness: 10.0   # Wrist (7Nm limit) - very soft
+        damping: 3.0
+      left_joint_5:
+        stiffness: 10.0   # Wrist (7Nm limit)
+        damping: 3.0
+      left_joint_6:
+        stiffness: 10.0   # Wrist (7Nm limit)
+        damping: 3.0
+      
+      right_joint_0:
+        stiffness: 30.0
+        damping: 4.0
+      right_joint_1:
+        stiffness: 30.0
+        damping: 4.0
+      right_joint_2:
+        stiffness: 15.0
+        damping: 5.0
+      right_joint_3:
+        stiffness: 20.0
+        damping: 3.0
+      right_joint_4:
+        stiffness: 10.0
+        damping: 3.0
+      right_joint_5:
+        stiffness: 10.0
+        damping: 3.0
+      right_joint_6:
+        stiffness: 10.0
+        damping: 3.0

@@ -136,19 +136,21 @@ void SimulateBridge::JointStatePublish() {
         int pos_idx = modelParam_.jointPosSensorIdx[i];
         int vel_idx = modelParam_.jointVelSensorIdx[i];
         int tor_idx = modelParam_.jointEffortSensorIdx[i];
+        int tor_adr = modelParam_.jointEffortDataAdr[i];
+        double tor_scale = modelParam_.jointEffortDataScale[i];
 
         if (pos_idx >= 0 && pos_idx < mj_model_->nsensor)
-            jointState.position[i] = mj_data_->sensordata[pos_idx];
+            jointState.position[i] = mj_data_->sensordata[pos_idx]; // NOTE: Potential BUG here for pos if not 1D sequential. Leaving as is per scope.
         else
             jointState.position[i] = 0;
 
         if (vel_idx >= 0 && vel_idx < mj_model_->nsensor)
-            jointState.velocity[i] = mj_data_->sensordata[vel_idx];
+            jointState.velocity[i] = mj_data_->sensordata[vel_idx]; // NOTE: Potential BUG here for vel
         else
             jointState.velocity[i] = 0;
 
-        if (tor_idx >= 0 && tor_idx < mj_model_->nsensor)
-            jointState.effort[i]   = mj_data_->sensordata[tor_idx];
+        if (tor_adr >= 0)
+            jointState.effort[i]   = mj_data_->sensordata[tor_adr] * tor_scale;
         else 
             jointState.effort[i]   = 0;
     }
@@ -348,6 +350,8 @@ void SimulateBridge::ReadModel(){
     modelParam_.jointPosSensorIdx.assign(mj_model_->njnt, -1);
     modelParam_.jointVelSensorIdx.assign(mj_model_->njnt, -1);
     modelParam_.jointEffortSensorIdx.assign(mj_model_->njnt, -1);
+    modelParam_.jointEffortDataAdr.assign(mj_model_->njnt, -1);
+    modelParam_.jointEffortDataScale.assign(mj_model_->njnt, 0.0);
     modelParam_.jointToActuatorIdx.assign(mj_model_->njnt, -1);
 
     // 建立执行器映射
@@ -406,10 +410,75 @@ void SimulateBridge::ReadModel(){
             if (mj_model_->actuator_trntype[actuator_id] == mjTRN_JOINT) {
                  tempAttch = mj_id2name(mj_model_, mjOBJ_JOINT, joint_id);
                  if(jointNameToIdx.find(tempAttch) != jointNameToIdx.end()){
-                    modelParam_.jointEffortSensorIdx[jointNameToIdx[tempAttch]] = i;
+                    int j_idx = jointNameToIdx[tempAttch];
+                    modelParam_.jointEffortSensorIdx[j_idx] = i;
+                    modelParam_.jointEffortDataAdr[j_idx] = mj_model_->sensor_adr[i];
+                    modelParam_.jointEffortDataScale[j_idx] = 1.0;
                  }
             } else {
                 tempAttch = mj_id2name(mj_model_, mjOBJ_ACTUATOR, actuator_id); // Fallback
+            }
+            
+            modelParam_.sensorType.push_back(std::vector<std::string>{tempName,tempType,tempAttch});
+            continue;
+        }
+
+        else if(mj_model_->sensor_type[i] == mjSENS_TORQUE || mj_model_->sensor_type[i] == mjSENS_FORCE) { // 力矩/力传感器 (site torque/force)
+            tempType = (mj_model_->sensor_type[i] == mjSENS_TORQUE) ? "joint torque (sensor)" : "joint force (sensor)";
+            if(modelParam_.jointTorHeadID == 99999) modelParam_.jointTorHeadID = modelParam_.sensorType.size();
+            
+            int site_id = mj_model_->sensor_objid[i];
+            int body_id = mj_model_->site_bodyid[site_id];
+            
+            // Attempt to find the joint associated with this body
+            // We assume the joint connects the parent to this body
+            // So we look for joints where body_id is the child
+            
+            // Iterate over joints to find one that belongs to this body
+            int joint_id = -1;
+            int jnt_adr = mj_model_->body_jntadr[body_id];
+            int jnt_num = mj_model_->body_jntnum[body_id];
+            
+            if (jnt_num > 0) {
+                joint_id = jnt_adr; // Take the first joint
+            }
+
+            if (joint_id != -1) {
+                tempAttch = mj_id2name(mj_model_, mjOBJ_JOINT, joint_id);
+                if(jointNameToIdx.find(tempAttch) != jointNameToIdx.end()){
+                    int j_idx = jointNameToIdx[tempAttch];
+                    modelParam_.jointEffortSensorIdx[j_idx] = i; // Store sensor ID for reference
+                    
+                    // Determine which axis to use
+                    // Get joint axis in body frame
+                    // Get site orientation in body frame
+                    // Project joint axis to site frame
+                    
+                    mjtNum* jnt_axis = mj_model_->jnt_axis + 3*joint_id;
+                    mjtNum* site_quat = mj_model_->site_quat + 4*site_id;
+                    
+                    // Rotate joint axis by inverse of site quaternion to get it in site frame
+                    mjtNum jnt_axis_site[3];
+                    mjtNum site_rot[9];
+                    mju_quat2Mat(site_rot, site_quat);
+                    mju_mulMatTVec(jnt_axis_site, site_rot, jnt_axis, 3, 3); // R^T * v
+                    
+                    // Find the largest component
+                    int best_axis = 0;
+                    double max_val = 0;
+                    for(int k=0; k<3; k++) {
+                        if (std::abs(jnt_axis_site[k]) > std::abs(max_val)) {
+                            max_val = jnt_axis_site[k];
+                            best_axis = k;
+                        }
+                    }
+                    
+                    modelParam_.jointEffortDataAdr[j_idx] = mj_model_->sensor_adr[i] + best_axis;
+                    // Check if aligned or anti-aligned
+                    modelParam_.jointEffortDataScale[j_idx] = (max_val > 0) ? 1.0 : -1.0;
+                }
+            } else {
+                 tempAttch = mj_id2name(mj_model_, mjOBJ_SITE, site_id);
             }
             
             modelParam_.sensorType.push_back(std::vector<std::string>{tempName,tempType,tempAttch});

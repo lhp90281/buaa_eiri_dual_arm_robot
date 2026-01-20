@@ -35,6 +35,10 @@ struct modelParam{
     std::vector<int> jointPosSensorIdx;
     std::vector<int> jointVelSensorIdx;
     std::vector<int> jointEffortSensorIdx;
+    // Store the exact address in sensordata and scale/sign
+    std::vector<int> jointEffortDataAdr;
+    std::vector<double> jointEffortDataScale;
+
     std::vector<int> jointToActuatorIdx;
     size_t imuQuatHeadID = 99999;
     size_t imuGyroHeadID = 99999;

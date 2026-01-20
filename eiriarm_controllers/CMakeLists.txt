@@ -29,7 +29,23 @@ ament_target_dependencies(gravity_comp_controller
 install(TARGETS gravity_comp_controller
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY launch
+add_executable(joint_impedance_controller src/joint_impedance_controller.cpp)
+target_include_directories(joint_impedance_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
+target_link_libraries(joint_impedance_controller pinocchio::pinocchio)
+
+ament_target_dependencies(joint_impedance_controller
+  rclcpp
+  sensor_msgs
+  std_msgs
+)
+
+install(TARGETS joint_impedance_controller
+  DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()
