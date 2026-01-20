@@ -4,5 +4,5 @@ mujoco_simulator:
   modelFile: "/home/ubuntu/ros2_ws/src/description/dual_arm_support/mjcf/dual_arm_robot.xml"
   jointCommandsTopic: "/ctrl/effort"
   unPauseService: "/unpause_physics"
-  initPauseFlag: false
+  initPauseFlag: true
   modelTableFlag: true
