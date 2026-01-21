@@ -9,9 +9,6 @@ Usage:
 
   # Gravity compensation controller
   ros2 launch eiriarm_bringup controllers.launch.py controller_type:=gravity_compensation
-
-  # Joint trajectory controller (PID-based)
-  ros2 launch eiriarm_bringup controllers.launch.py controller_type:=joint_trajectory
 """
 
 import os
@@ -52,16 +49,9 @@ def launch_setup(context, *args, **kwargs):
             'ros2_control_controllers.yaml'
         ])
         controllers_to_start = ['joint_state_broadcaster', 'gravity_compensation_controller']
-    elif controller_type == 'joint_trajectory':
-        config_file = PathJoinSubstitution([
-            FindPackageShare('eiriarm_bringup'),
-            'config',
-            'controllers.yaml'
-        ])
-        controllers_to_start = ['joint_state_broadcaster', 'joint_trajectory_controller']
     else:
         raise ValueError(f"Unknown controller_type: {controller_type}. "
-                        f"Valid options: impedance, gravity_compensation, joint_trajectory")
+                        f"Valid options: impedance, gravity_compensation")
     
     # Robot state publisher
     robot_state_publisher = Node(
@@ -114,7 +104,7 @@ def generate_launch_description():
     controller_type_arg = DeclareLaunchArgument(
         'controller_type',
         default_value='impedance',
-        description='Controller type: impedance, gravity_compensation, or joint_trajectory'
+        description='Controller type: impedance or gravity_compensation'
     )
     
     return LaunchDescription([

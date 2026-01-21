@@ -9,9 +9,6 @@ Usage:
 
   # Gravity compensation controller
   ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
-
-  # Joint trajectory controller
-  ros2 launch eiriarm_bringup system.launch.py controller_type:=joint_trajectory
 """
 
 from launch import LaunchDescription
@@ -26,7 +23,7 @@ def generate_launch_description():
     controller_type_arg = DeclareLaunchArgument(
         'controller_type',
         default_value='impedance',
-        description='Controller type: impedance, gravity_compensation, or joint_trajectory'
+        description='Controller type: impedance or gravity_compensation'
     )
     
     gui_arg = DeclareLaunchArgument(

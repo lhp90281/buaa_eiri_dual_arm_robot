@@ -131,48 +131,13 @@ install(TARGETS
 )
 
 # ============================================================================
-# 3. Keep legacy executables for backward compatibility (optional)
-# ============================================================================
-add_executable(gravity_comp_controller src/gravity_comp_controller.cpp)
-target_include_directories(gravity_comp_controller PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-
-target_link_libraries(gravity_comp_controller pinocchio::pinocchio)
-
-ament_target_dependencies(gravity_comp_controller
-  rclcpp
-  sensor_msgs
-  std_msgs
-)
-
-add_executable(joint_impedance_controller src/joint_impedance_controller.cpp)
-target_include_directories(joint_impedance_controller PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-
-target_link_libraries(joint_impedance_controller pinocchio::pinocchio)
-
-ament_target_dependencies(joint_impedance_controller
-  rclcpp
-  sensor_msgs
-  std_msgs
-)
-
-install(TARGETS 
-  gravity_comp_controller
-  joint_impedance_controller
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-# ============================================================================
-# 4. Install headers and other files
+# 3. Install headers and other files
 # ============================================================================
 install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY launch config
+install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 

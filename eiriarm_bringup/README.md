@@ -5,7 +5,7 @@
 ## 📦 功能
 
 - **MuJoCo 仿真**：启动 MuJoCo 物理仿真器
-- **多种控制器**：支持阻抗控制、重力补偿、轨迹跟踪
+- **多种控制器**：支持阻抗控制、重力补偿
 - **一键启动**：完整系统或分离启动
 
 ---
@@ -22,9 +22,6 @@ ros2 launch eiriarm_bringup system.launch.py
 
 # 重力补偿控制器
 ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
-
-# 轨迹跟踪控制器
-ros2 launch eiriarm_bringup system.launch.py controller_type:=joint_trajectory
 ```
 
 ### 方式2：分离启动
@@ -101,31 +98,6 @@ ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensati
 
 ---
 
-### 3. 轨迹跟踪控制器（joint_trajectory）
-
-**特点**：
-- PID 位置控制
-- 精确轨迹跟踪
-- 适合预定义运动
-
-**启动**：
-```bash
-ros2 launch eiriarm_bringup system.launch.py controller_type:=joint_trajectory
-```
-
-**发送轨迹命令**：
-```bash
-ros2 topic pub /joint_trajectory_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{joint_names: ['right_joint_0', 'right_joint_1'], 
-    points: [{positions: [0.5, 0.3], time_from_start: {sec: 2}}]}"
-```
-
-**配置文件**：
-- `/src/eiriarm_bringup/config/controllers.yaml`
-
----
-
 ## 📊 话题和服务
 
 ### 通用话题
@@ -146,16 +118,6 @@ ros2 topic pub /joint_trajectory_controller/joint_trajectory \
 
 # 反馈（可选）
 /joint_impedance_controller/feedback             # sensor_msgs/msg/JointState
-```
-
-### 轨迹控制器专用
-
-```bash
-# 轨迹命令
-/joint_trajectory_controller/joint_trajectory    # trajectory_msgs/msg/JointTrajectory
-
-# 状态反馈
-/joint_trajectory_controller/state               # control_msgs/msg/JointTrajectoryControllerState
 ```
 
 ### 控制器管理服务
@@ -179,7 +141,6 @@ ros2 control switch_controllers \
 | 文件 | 用途 |
 |------|------|
 | `eiriarm_controllers/config/ros2_control_controllers.yaml` | 阻抗控制器和重力补偿控制器配置 |
-| `eiriarm_bringup/config/controllers.yaml` | 轨迹跟踪控制器配置 |
 
 ### URDF 配置
 
@@ -286,23 +247,6 @@ ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensati
 # 3. 在 MuJoCo 中手动移动机器人，感受零重力效果
 ```
 
-### 示例3：轨迹执行
-
-```bash
-# 1. 启动轨迹控制器
-ros2 launch eiriarm_bringup system.launch.py controller_type:=joint_trajectory
-
-# 2. 发送轨迹
-ros2 topic pub /joint_trajectory_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{joint_names: ['right_joint_0', 'right_joint_1', 'right_joint_2'],
-    points: [
-      {positions: [0.0, 0.0, 0.0], time_from_start: {sec: 0}},
-      {positions: [0.5, 0.3, 0.2], time_from_start: {sec: 2}},
-      {positions: [0.0, 0.0, 0.0], time_from_start: {sec: 4}}
-    ]}"
-```
-
 ---
 
 ## 💡 最佳实践
@@ -317,9 +261,10 @@ ros2 topic pub /joint_trajectory_controller/joint_trajectory \
 
 ## 🔄 版本历史
 
-- **v1.0.0**：初始版本，支持三种控制器类型
+- **v1.0.0**：初始版本，支持阻抗控制和重力补偿
 - **v1.1.0**：优化阻抗控制器参数，减少抖动
 - **v1.2.0**：添加完整系统启动文件
+- **v1.3.0**：修复关节索引映射问题，简化控制器架构
 
 ---
 
