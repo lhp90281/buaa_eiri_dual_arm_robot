@@ -3,15 +3,25 @@
 <package format="3">
   <name>eiriarm_controllers</name>
   <version>0.0.0</version>
-  <description>Eiriarm controllers using Pinocchio</description>
+  <description>Eiriarm controllers using Pinocchio and ros2_control</description>
   <maintainer email="user@todo.todo">user</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Core ROS 2 dependencies -->
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  
+  <!-- ros2_control dependencies -->
+  <depend>controller_interface</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>realtime_tools</depend>
+  
+  <!-- Dynamics computation -->
   <depend>pinocchio</depend>
 
   <test_depend>ament_lint_auto</test_depend>
@@ -19,5 +29,7 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <controller_interface plugin="${prefix}/eiriarm_controllers.xml"/>
+    <hardware_interface plugin="${prefix}/eiriarm_hardware_interface.xml"/>
   </export>
 </package>

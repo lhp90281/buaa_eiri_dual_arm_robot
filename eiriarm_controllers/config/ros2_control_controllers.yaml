@@ -1,0 +1,134 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # Hz - High-frequency control loop
+
+    # List of controllers to load
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    gravity_compensation_controller:
+      type: eiriarm_controllers/GravityCompensationController
+
+    joint_impedance_controller:
+      type: eiriarm_controllers/JointImpedanceControllerPlugin
+
+# ============================================================================
+# Gravity Compensation Controller Configuration
+# ============================================================================
+gravity_compensation_controller:
+  ros__parameters:
+    # List of joints to control (must match hardware interface)
+    joints:
+      - left_joint_0
+      - left_joint_1
+      - left_joint_2
+      - left_joint_3
+      - left_joint_4
+      - left_joint_5
+      - left_joint_6
+      - right_joint_0
+      - right_joint_1
+      - right_joint_2
+      - right_joint_3
+      - right_joint_4
+      - right_joint_5
+      - right_joint_6
+
+    # Maximum effort (Nm) - fallback if URDF doesn't specify
+    max_effort: 50.0
+    
+    # Velocity filter alpha (same as impedance controller for consistency)
+    velocity_filter_alpha: 0.98
+    
+    # Note: This controller applies ONLY gravity compensation (Kp=0, Kd=0)
+    # Effort limits are automatically loaded from URDF
+
+# ============================================================================
+# Joint Impedance Controller Configuration
+# ============================================================================
+joint_impedance_controller:
+  ros__parameters:
+    # List of joints to control (must match hardware interface)
+    joints:
+      - left_joint_0
+      - left_joint_1
+      - left_joint_2
+      - left_joint_3
+      - left_joint_4
+      - left_joint_5
+      - left_joint_6
+      - right_joint_0
+      - right_joint_1
+      - right_joint_2
+      - right_joint_3
+      - right_joint_4
+      - right_joint_5
+      - right_joint_6
+
+    # Global default gains
+    default_stiffness: 8.0   # Soft default for compliant behavior
+    default_damping: 3.0     # Higher damping now that velocity saturation is removed
+
+    # Safety limits
+    max_effort: 50.0           # Global torque limit (Nm), per-joint limits from URDF
+    position_error_limit: 1.5  # ~86 degrees, allow large range for return motion
+    velocity_filter_alpha: 0.98  # Strong filtering: 98% history + 2% new (critical for stability!)
+    velocity_saturation: 8.0     # Increased to reduce damping saturation during fast motion
+
+    # Per-joint gains (optional - override defaults)
+    # Format: gains.<joint_name>.stiffness and gains.<joint_name>.damping
+    
+    # Per-joint gains - Tuned for real motor damping (0.25 Nm·s/rad)
+    # Max torque = Kp*0.3 + Kd*v_max + grav_max must stay under limit
+    # Joint 0-1: 40Nm, Joint 2-3: 27Nm, Joint 4-6: 7Nm
+    gains:
+      left_joint_0:
+        stiffness: 30.0   # Base joint (40Nm limit)
+        damping: 6.0
+      left_joint_1:
+        stiffness: 30.0  # Shoulder (40Nm limit) - needs higher for gravity
+        damping: 6.0
+      left_joint_2:
+        stiffness: 20.0  # Elbow (27Nm limit) - reduced to leave more margin for damping
+        damping: 4.5     # High damping to keep velocity < 10 rad/s
+      left_joint_3:
+        stiffness: 20.0  # Wrist (27Nm limit)
+        damping: 4.5
+      left_joint_4:
+        stiffness: 10.0  # Wrist (7Nm limit) - very soft
+        damping: 3.0
+      left_joint_5:
+        stiffness: 10.0  # Wrist (7Nm limit)
+        damping: 3.0
+      left_joint_6:
+        stiffness: 10.0  # Wrist (7Nm limit)
+        damping: 3.0
+
+      # Right arm gains - Reduced damping to prevent oscillation during fast motion
+      right_joint_0:
+        stiffness: 30.0
+        damping: 6.0    # Reduced from 8.0 to prevent excessive damping torque
+      right_joint_1:
+        stiffness: 30.0
+        damping: 6.0
+      right_joint_2:
+        stiffness: 20.0
+        damping: 4.5    # Reduced from 6.0
+      right_joint_3:
+        stiffness: 20.0
+        damping: 4.5
+      right_joint_4:
+        stiffness: 10.0
+        damping: 3.0    # Reduced from 4.0
+      right_joint_5:
+        stiffness: 10.0
+        damping: 3.0
+      right_joint_6:
+        stiffness: 10.0
+        damping: 3.0
+
+# ============================================================================
+# Joint State Broadcaster Configuration
+# ============================================================================
+joint_state_broadcaster:
+  ros__parameters: {}

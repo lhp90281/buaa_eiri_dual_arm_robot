@@ -298,7 +298,7 @@ private:
             
             // Impedance Term: Kp * clamp(qd - q) + Kd * (vd - v)
             double q_curr = q_[idx_q];
-            double v_curr = v_[idx_v];
+            //double v_curr = v_[idx_v];
             double q_des = q_d_[idx_q];
             double v_des = v_d_[idx_v];
             
@@ -320,40 +320,40 @@ private:
             // Safety Clamp using per-joint limit
             double clamped_effort = std::max(-joint_effort_limit, std::min(tau_total, joint_effort_limit));
             
-            // Continuous debug output for left_joint_2 to diagnose oscillation
-            if (name == "left_joint_2") {
-                static int debug_counter = 0;
-                static double prev_q = q_curr;
-                static double prev_v = v_curr;
+            // // Continuous debug output for left_joint_2 to diagnose oscillation
+            // if (name == "left_joint_2") {
+            //     static int debug_counter = 0;
+            //     static double prev_q = q_curr;
+            //     static double prev_v = v_curr;
                 
-                // Detect position jumps (> 0.1 rad in one step = 50 rad/s at 500Hz)
-                double q_jump = std::abs(q_curr - prev_q);
-                double v_jump = std::abs(v_curr - prev_v);
-                bool has_jump = (q_jump > 0.1 || v_jump > 20.0);
+            //     // Detect position jumps (> 0.1 rad in one step = 50 rad/s at 500Hz)
+            //     double q_jump = std::abs(q_curr - prev_q);
+            //     double v_jump = std::abs(v_curr - prev_v);
+            //     bool has_jump = (q_jump > 0.1 || v_jump > 20.0);
                 
-                if (debug_counter++ % 100 == 0 || has_jump) {  // Print every 100 iterations or on jump
-                    bool is_clamped = (std::abs(tau_total) > joint_effort_limit);
+            //     if (debug_counter++ % 100 == 0 || has_jump) {  // Print every 100 iterations or on jump
+            //         bool is_clamped = (std::abs(tau_total) > joint_effort_limit);
                     
-                    RCLCPP_INFO(this->get_logger(), 
-                        "[%s] q=%.3f->%.3f(err=%.3f) Δq=%.3f | v_raw=%.2f Δv=%.2f v_filt=%.2f | "
-                        "tau: pos=%.1f vel=%.1f grav=%.1f => total=%.1f %s%s | Kp=%.1f Kd=%.1f",
-                        name.c_str(), q_curr, q_des, pos_error, q_jump, v_curr, v_jump, v_curr_filtered,
-                        tau_pos, tau_vel, tau_g, tau_total,
-                        is_clamped ? "CLAMP" : "     ",
-                        has_jump ? " JUMP!" : "",
-                        k_p, k_d);
-                }
+            //         RCLCPP_INFO(this->get_logger(), 
+            //             "[%s] q=%.3f->%.3f(err=%.3f) Δq=%.3f | v_raw=%.2f Δv=%.2f v_filt=%.2f | "
+            //             "tau: pos=%.1f vel=%.1f grav=%.1f => total=%.1f %s%s | Kp=%.1f Kd=%.1f",
+            //             name.c_str(), q_curr, q_des, pos_error, q_jump, v_curr, v_jump, v_curr_filtered,
+            //             tau_pos, tau_vel, tau_g, tau_total,
+            //             is_clamped ? "CLAMP" : "     ",
+            //             has_jump ? " JUMP!" : "",
+            //             k_p, k_d);
+            //     }
                 
-                prev_q = q_curr;
-                prev_v = v_curr;
-            }
+            //     prev_q = q_curr;
+            //     prev_v = v_curr;
+            // }
             
-            // Warning for any joint if torque exceeds limit
-            if (std::abs(tau_total) > joint_effort_limit) {
-                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                     "Torque limit exceeded on %s: Total=%.2f (Grav=%.2f, Imp=%.2f). q=%.3f, qd=%.3f, v_raw=%.3f, v_filt=%.3f, Kp=%.1f, Kd=%.1f. Limit=%.1f, Clamped to %.2f",
-                     name.c_str(), tau_total, tau_g, tau_imp, q_curr, q_des, v_curr, v_curr_filtered, k_p, k_d, joint_effort_limit, clamped_effort);
-            }
+            // // Warning for any joint if torque exceeds limit
+            // if (std::abs(tau_total) > joint_effort_limit) {
+            //      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            //          "Torque limit exceeded on %s: Total=%.2f (Grav=%.2f, Imp=%.2f). q=%.3f, qd=%.3f, v_raw=%.3f, v_filt=%.3f, Kp=%.1f, Kd=%.1f. Limit=%.1f, Clamped to %.2f",
+            //          name.c_str(), tau_total, tau_g, tau_imp, q_curr, q_des, v_curr, v_curr_filtered, k_p, k_d, joint_effort_limit, clamped_effort);
+            // }
 
             total_effort_msg.name.push_back(name);
             total_effort_msg.effort.push_back(clamped_effort);
