@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Controllers Launch File
+"""Controllers Launch File
 Starts ros2_control with configurable controller type.
 
 Usage:
@@ -9,6 +8,9 @@ Usage:
 
   # Gravity compensation controller
   ros2 launch eiriarm_bringup controllers.launch.py controller_type:=gravity_compensation
+
+  # With gripper controller
+  ros2 launch eiriarm_bringup controllers.launch.py enable_gripper:=true
 """
 
 import os
@@ -23,6 +25,7 @@ from launch_ros.substitutions import FindPackageShare
 def launch_setup(context, *args, **kwargs):
     # Get launch arguments
     controller_type = LaunchConfiguration('controller_type').perform(context)
+    enable_gripper = LaunchConfiguration('enable_gripper').perform(context).lower() == 'true'
     
     # Get URDF file path
     urdf_file = os.path.join(
@@ -96,6 +99,22 @@ def launch_setup(context, *args, **kwargs):
         ros2_control_node,
     ] + controller_spawners
     
+    # Gripper controller (standalone node)
+    if enable_gripper:
+        gripper_config_file = os.path.join(
+            get_package_share_directory('eiriarm_controllers'),
+            'config',
+            'gripper_controller.yaml'
+        )
+        gripper_controller = Node(
+            package='eiriarm_controllers',
+            executable='gripper_controller_node',
+            name='gripper_controller',
+            output='screen',
+            parameters=[gripper_config_file],
+        )
+        nodes_to_start.append(gripper_controller)
+    
     return nodes_to_start
 
 
@@ -107,7 +126,14 @@ def generate_launch_description():
         description='Controller type: impedance or gravity_compensation'
     )
     
+    enable_gripper_arg = DeclareLaunchArgument(
+        'enable_gripper',
+        default_value='true',
+        description='Enable gripper controller'
+    )
+    
     return LaunchDescription([
         controller_type_arg,
+        enable_gripper_arg,
         OpaqueFunction(function=launch_setup)
     ])

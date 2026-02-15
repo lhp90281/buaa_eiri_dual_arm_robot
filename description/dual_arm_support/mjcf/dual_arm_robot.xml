@@ -229,7 +229,7 @@
     <motor name="act_left_j5" joint="left_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7" />
     <motor name="act_left_j6" joint="left_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7" />
 
-    <motor name="act_left_gripper_right" joint="left_gripper_right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80" />
+    <velocity name="act_left_gripper_right" joint="left_gripper_right_finger_joint" kv="500" ctrllimited="true" ctrlrange="-0.2 0.2" />
     
 
     <motor name="act_right_j0" joint="right_joint_0" gear="1" ctrllimited="true" ctrlrange="-40 40" />
@@ -240,7 +240,7 @@
     <motor name="act_right_j5" joint="right_joint_5" gear="1" ctrllimited="true" ctrlrange="-7 7" />
     <motor name="act_right_j6" joint="right_joint_6" gear="1" ctrllimited="true" ctrlrange="-7 7" />
 
-    <motor name="act_right_gripper_right" joint="right_gripper_right_finger_joint" gear="1" ctrllimited="true" ctrlrange="-80 80" />
+    <velocity name="act_right_gripper_right" joint="right_gripper_right_finger_joint" kv="500" ctrllimited="true" ctrlrange="-0.2 0.2" />
     
   </actuator>
 

@@ -131,7 +131,24 @@ install(TARGETS
 )
 
 # ============================================================================
-# 3. Install headers and other files
+# 3. Gripper Controller (standalone node)
+# ============================================================================
+add_executable(gripper_controller_node
+  src/gripper_controller_node.cpp
+)
+
+ament_target_dependencies(gripper_controller_node
+  rclcpp
+  sensor_msgs
+  std_msgs
+)
+
+install(TARGETS gripper_controller_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ============================================================================
+# 4. Install headers and other files
 # ============================================================================
 install(DIRECTORY include/
   DESTINATION include

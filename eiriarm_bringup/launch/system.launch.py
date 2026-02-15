@@ -9,6 +9,9 @@ Usage:
 
   # Gravity compensation controller
   ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
+
+  # Disable gripper controller
+  ros2 launch eiriarm_bringup system.launch.py enable_gripper:=false
 """
 
 from launch import LaunchDescription
@@ -30,6 +33,12 @@ def generate_launch_description():
         'gui',
         default_value='true',
         description='Enable MuJoCo GUI'
+    )
+    
+    enable_gripper_arg = DeclareLaunchArgument(
+        'enable_gripper',
+        default_value='true',
+        description='Enable gripper controller'
     )
     
     # Include MuJoCo simulation
@@ -60,6 +69,7 @@ def generate_launch_description():
                 ]),
                 launch_arguments={
                     'controller_type': LaunchConfiguration('controller_type'),
+                    'enable_gripper': LaunchConfiguration('enable_gripper'),
                 }.items()
             )
         ]
@@ -68,6 +78,7 @@ def generate_launch_description():
     return LaunchDescription([
         controller_type_arg,
         gui_arg,
+        enable_gripper_arg,
         mujoco_launch,
         controllers_launch,
     ])
