@@ -176,19 +176,19 @@ private:
       gripper.state = GripperState::MOVING_OPEN;
       gripper.move_cycles = 0;
       gripper.force_integral = 0.0;
-      RCLCPP_INFO(this->get_logger(), "%s gripper: MOVING_OPEN", gripper.name.c_str());
+      //RCLCPP_INFO(this->get_logger(), "%s gripper: MOVING_OPEN", gripper.name.c_str());
     }
     else if (cmd == "close") {
       gripper.state = GripperState::MOVING_CLOSE;
       gripper.move_cycles = 0;
       gripper.force_integral = 0.0;
-      RCLCPP_INFO(this->get_logger(), "%s gripper: MOVING_CLOSE", gripper.name.c_str());
+      //RCLCPP_INFO(this->get_logger(), "%s gripper: MOVING_CLOSE", gripper.name.c_str());
     }
     else if (cmd == "hold") {
       gripper.state = GripperState::HOLD;
       gripper.target_position = std::clamp(gripper.position, position_open_, position_close_);
-      RCLCPP_INFO(this->get_logger(), "%s gripper: HOLD at %.4f m",
-        gripper.name.c_str(), gripper.target_position);
+      /*RCLCPP_INFO(this->get_logger(), "%s gripper: HOLD at %.4f m",
+        gripper.name.c_str(), gripper.target_position);*/
     }
     else {
       RCLCPP_WARN(this->get_logger(),
@@ -276,9 +276,9 @@ private:
         if (gripper.position >= position_close_) {
           gripper.state = GripperState::HOLD;
           gripper.target_position = position_close_;
-          RCLCPP_INFO(this->get_logger(),
-            "%s gripper: close limit -> HOLD at %.4f m",
-            gripper.name.c_str(), gripper.target_position);
+          // RCLCPP_INFO(this->get_logger(),
+          //   "%s gripper: close limit -> HOLD at %.4f m",
+          //   gripper.name.c_str(), gripper.target_position);
           return 0.0;
         }
 
@@ -304,9 +304,9 @@ private:
         if (gripper.position <= position_open_) {
           gripper.state = GripperState::HOLD;
           gripper.target_position = position_open_;
-          RCLCPP_INFO(this->get_logger(),
-            "%s gripper: open limit -> HOLD at %.4f m",
-            gripper.name.c_str(), gripper.target_position);
+          // RCLCPP_INFO(this->get_logger(),
+          //   "%s gripper: open limit -> HOLD at %.4f m",
+          //   gripper.name.c_str(), gripper.target_position);
           return 0.0;
         }
 
@@ -375,7 +375,7 @@ int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<eiriarm_controllers::GripperController>();
-  RCLCPP_INFO(node->get_logger(), "Gripper controller started [velocity actuator mode]");
+  RCLCPP_INFO(node->get_logger(), "\033[32mGripper controller started [velocity actuator mode]\033[0m");
   rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;

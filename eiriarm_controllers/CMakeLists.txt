@@ -147,6 +147,16 @@ install(TARGETS gripper_controller_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Install Python scripts
+install(PROGRAMS scripts/joint_monitor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME joint_monitor
+)
+install(PROGRAMS scripts/gripper_test_plot.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME gripper_test_plot
+)
+
 # ============================================================================
 # 4. Install headers and other files
 # ============================================================================

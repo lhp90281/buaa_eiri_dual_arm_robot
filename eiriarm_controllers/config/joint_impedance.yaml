@@ -1,57 +1,58 @@
 joint_impedance_controller:
   ros__parameters:
-    control_frequency: 500.0  # Match simulation better
-    stiffness: 8.0   # Soft default for compliant behavior
-    damping: 3.0     # Higher damping now that velocity saturation is removed
-    max_effort: 50.0 # Global torque limit (Nm), per-joint limits from URDF
-    position_error_limit: 0.3 # ~17 degrees, allow more range for compliance
-    velocity_filter_alpha: 0.99  # Very strong filtering like Franka
-    velocity_saturation: 100.0  # Effectively disabled, adaptive damping handles limits
+    control_frequency: 500.0
+    stiffness: 5.0   # Soft default for compliant behavior
+    damping: 1.0     # Default damping
+    max_effort: 40.0 # Global torque limit (Nm), per-joint limits from URDF
+    position_error_limit: 0.5 # ~29 degrees, prevents violent snapback while allowing compliance
+    velocity_filter_alpha: 0.3  # 30% history: ~53Hz cutoff at 500Hz, good phase response
+    velocity_saturation: 5.0    # Max velocity error for damping (also sets damping reserve)
     
-    # Per-joint gains - Tuned for real motor damping (0.25 Nm·s/rad)
-    # Max torque = Kp*0.3 + Kd*v_max + grav_max must stay under limit
-    # Joint 0-1: 40Nm, Joint 2-3: 27Nm, Joint 4-6: 7Nm
+    # Damping-priority allocation ensures damping always has headroom:
+    #   base_limit = effort_limit - Kd*vel_sat  (reserved for damping)
+    #   gravity+spring clamped to base_limit, then damping added
+    # This prevents torque saturation from killing damping.
     gains:
       left_joint_0:
-        stiffness: 30.0  # Base joint (40Nm limit)
+        stiffness: 15.0   # Base (40Nm): base_limit=40-4*5=20, spring_max=15*0.5=7.5
         damping: 4.0
       left_joint_1:
-        stiffness: 30.0  # Shoulder (40Nm limit) - needs higher for gravity
+        stiffness: 15.0   # Shoulder (40Nm)
         damping: 4.0
       left_joint_2:
-        stiffness: 15.0  # Elbow (27Nm limit) - reduced to leave more margin for damping
-        damping: 5.0     # High damping to keep velocity < 10 rad/s
+        stiffness: 10.0   # Elbow (27Nm): base_limit=27-3*5=12, spring_max=10*0.5=5
+        damping: 3.0
       left_joint_3:
-        stiffness: 20.0  # Wrist (27Nm limit)
+        stiffness: 10.0   # Forearm (27Nm)
         damping: 3.0
       left_joint_4:
-        stiffness: 10.0   # Wrist (7Nm limit) - very soft
-        damping: 3.0
+        stiffness: 3.0    # Wrist (7Nm): base_limit=7-2*5=-3→0, spring clamped to 0!
+        damping: 2.0      # Damping dominates for wrist (safe with priority alloc)
       left_joint_5:
-        stiffness: 10.0   # Wrist (7Nm limit)
-        damping: 3.0
+        stiffness: 3.0    # Wrist (7Nm)
+        damping: 2.0
       left_joint_6:
-        stiffness: 10.0   # Wrist (7Nm limit)
-        damping: 3.0
+        stiffness: 3.0    # Wrist (7Nm)
+        damping: 2.0
       
       right_joint_0:
-        stiffness: 30.0
+        stiffness: 15.0
         damping: 4.0
       right_joint_1:
-        stiffness: 30.0
+        stiffness: 15.0
         damping: 4.0
       right_joint_2:
-        stiffness: 15.0
-        damping: 5.0
+        stiffness: 10.0
+        damping: 3.0
       right_joint_3:
-        stiffness: 20.0
+        stiffness: 10.0
         damping: 3.0
       right_joint_4:
-        stiffness: 10.0
-        damping: 3.0
+        stiffness: 3.0
+        damping: 2.0
       right_joint_5:
-        stiffness: 10.0
-        damping: 3.0
+        stiffness: 3.0
+        damping: 2.0
       right_joint_6:
-        stiffness: 10.0
-        damping: 3.0
+        stiffness: 3.0
+        damping: 2.0

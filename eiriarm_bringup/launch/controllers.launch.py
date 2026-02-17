@@ -44,14 +44,14 @@ def launch_setup(context, *args, **kwargs):
             'config',
             'ros2_control_controllers.yaml'
         ])
-        controllers_to_start = ['joint_state_broadcaster', 'joint_impedance_controller']
+        controllers_to_start = ['joint_impedance_controller']
     elif controller_type == 'gravity_compensation':
         config_file = PathJoinSubstitution([
             FindPackageShare('eiriarm_controllers'),
             'config',
             'ros2_control_controllers.yaml'
         ])
-        controllers_to_start = ['joint_state_broadcaster', 'gravity_compensation_controller']
+        controllers_to_start = ['gravity_compensation_controller']
     else:
         raise ValueError(f"Unknown controller_type: {controller_type}. "
                         f"Valid options: impedance, gravity_compensation")

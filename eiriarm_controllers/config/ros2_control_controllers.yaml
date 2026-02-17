@@ -66,66 +66,65 @@ joint_impedance_controller:
       - right_joint_6
 
     # Global default gains
-    default_stiffness: 8.0   # Soft default for compliant behavior
-    default_damping: 3.0     # Higher damping now that velocity saturation is removed
+    default_stiffness: 3.0   # Soft default for compliant behavior
+    default_damping: 0.2     # Default damping
 
     # Safety limits
-    max_effort: 50.0           # Global torque limit (Nm), per-joint limits from URDF
-    position_error_limit: 1.5  # ~86 degrees, allow large range for return motion
-    velocity_filter_alpha: 0.98  # Strong filtering: 98% history + 2% new (critical for stability!)
-    velocity_saturation: 8.0     # Increased to reduce damping saturation during fast motion
+    max_effort: 40.0           # Global torque limit (Nm), per-joint limits from URDF
+    position_error_limit: 0.3 # ~29 degrees, prevents violent snapback while allowing compliance
+    velocity_filter_alpha: 0.0  # 95% history + 5% new: smooth damping, ~1.6Hz cutoff at 500Hz
+    velocity_saturation: 3.5     # Max velocity error for damping (Kd*3 = max damping torque)
 
     # Per-joint gains (optional - override defaults)
     # Format: gains.<joint_name>.stiffness and gains.<joint_name>.damping
     
-    # Per-joint gains - Tuned for real motor damping (0.25 Nm·s/rad)
-    # Max torque = Kp*0.3 + Kd*v_max + grav_max must stay under limit
-    # Joint 0-1: 40Nm, Joint 2-3: 27Nm, Joint 4-6: 7Nm
+    # Per-joint gains - MUST satisfy: |gravity| + Kp*error_limit + Kd*vel_sat < effort_limit
+    # Gravity budget: J0-1 ~20Nm, J2-3 ~10Nm, J4-6 ~3Nm
+    # Remaining for impedance: J0-1 ~20Nm, J2-3 ~17Nm, J4-6 ~4Nm
     gains:
       left_joint_0:
-        stiffness: 30.0   # Base joint (40Nm limit)
-        damping: 6.0
+        stiffness: 10.0   # Base (40Nm limit): 15*0.5=7.5 spring + 8*3=24 damp max
+        damping: 2.0      # High damping for stability (near critical)
       left_joint_1:
-        stiffness: 30.0  # Shoulder (40Nm limit) - needs higher for gravity
-        damping: 6.0
+        stiffness: 10.0   # Shoulder (40Nm limit)
+        damping: 2.0
       left_joint_2:
-        stiffness: 20.0  # Elbow (27Nm limit) - reduced to leave more margin for damping
-        damping: 4.5     # High damping to keep velocity < 10 rad/s
+        stiffness: 7.0   # Elbow (27Nm limit): 12*0.5=6 spring + 5*3=15 damp max
+        damping: 1.0
       left_joint_3:
-        stiffness: 20.0  # Wrist (27Nm limit)
-        damping: 4.5
+        stiffness: 7.0   # Forearm (27Nm limit)
+        damping: 1.0
       left_joint_4:
-        stiffness: 10.0  # Wrist (7Nm limit) - very soft
-        damping: 3.0
+        stiffness: 2.0    # Wrist (7Nm limit): 5*0.5=2.5 spring + 2*3=6 damp max
+        damping: 0.2
       left_joint_5:
-        stiffness: 10.0  # Wrist (7Nm limit)
-        damping: 3.0
+        stiffness: 2.0    # Wrist (7Nm limit)
+        damping: 0.2
       left_joint_6:
-        stiffness: 10.0  # Wrist (7Nm limit)
-        damping: 3.0
+        stiffness: 2.0    # Wrist (7Nm limit)
+        damping: 0.2
 
-      # Right arm gains - Reduced damping to prevent oscillation during fast motion
       right_joint_0:
-        stiffness: 30.0
-        damping: 6.0    # Reduced from 8.0 to prevent excessive damping torque
+        stiffness: 10.0
+        damping: 2.0
       right_joint_1:
-        stiffness: 30.0
-        damping: 6.0
+        stiffness: 10.0
+        damping: 2.0
       right_joint_2:
-        stiffness: 20.0
-        damping: 4.5    # Reduced from 6.0
+        stiffness: 7.0
+        damping: 1.0
       right_joint_3:
-        stiffness: 20.0
-        damping: 4.5
+        stiffness: 7.0
+        damping: 1.0
       right_joint_4:
-        stiffness: 10.0
-        damping: 3.0    # Reduced from 4.0
+        stiffness: 2.0
+        damping: 0.2
       right_joint_5:
-        stiffness: 10.0
-        damping: 3.0
+        stiffness: 2.0
+        damping: 0.2
       right_joint_6:
-        stiffness: 10.0
-        damping: 3.0
+        stiffness: 2.0
+        damping: 0.2
 
 # ============================================================================
 # Joint State Broadcaster Configuration

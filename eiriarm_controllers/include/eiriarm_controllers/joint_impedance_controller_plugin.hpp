@@ -103,9 +103,12 @@ private:
   Eigen::VectorXd q_desired_;
   Eigen::VectorXd v_desired_;
   
-  // Gain vectors (aligned with joints)
+  // Gain vectors (aligned with full model velocity indices)
   Eigen::VectorXd stiffness_vec_;
   Eigen::VectorXd damping_vec_;
+
+  // Cached mapping: joint_names_[i] -> velocity index in full Pinocchio model
+  std::vector<int> joint_idx_v_;
 
   // Realtime buffer for target commands
   realtime_tools::RealtimeBuffer<sensor_msgs::msg::JointState::SharedPtr> rt_target_buffer_;
@@ -119,6 +122,9 @@ private:
   // Flags
   bool target_received_ = false;
   bool initial_pose_captured_ = false;
+  bool velocity_initialized_ = false;
+  int warmup_counter_ = 0;
+  static constexpr int WARMUP_CYCLES = 100;  // 200ms at 500Hz: gravity-only warmup
 };
 
 }  // namespace eiriarm_controllers

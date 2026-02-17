@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -116,6 +117,21 @@ controller_interface::CallbackReturn JointImpedanceControllerPlugin::on_configur
   q_desired_ = Eigen::VectorXd::Zero(dynamics_->getNq());
   v_desired_ = Eigen::VectorXd::Zero(dynamics_->getNv());
 
+  // Build cached joint name -> Pinocchio velocity index mapping
+  joint_idx_v_.resize(joint_names_.size(), -1);
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
+      if (dynamics_->getJointName(j) == joint_names_[i]) {
+        joint_idx_v_[i] = dynamics_->getJointIdxV(j);
+        break;
+      }
+    }
+    if (joint_idx_v_[i] < 0) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "Joint '%s' not found in Pinocchio model!", joint_names_[i].c_str());
+    }
+  }
+
   // Initialize gain vectors and per-joint gains map
   stiffness_vec_ = Eigen::VectorXd::Constant(dynamics_->getNv(), default_stiffness_);
   damping_vec_ = Eigen::VectorXd::Constant(dynamics_->getNv(), default_damping_);
@@ -146,6 +162,7 @@ controller_interface::CallbackReturn JointImpedanceControllerPlugin::on_configur
     
     // Get effort limit from dynamics model (from URDF)
     double effort_limit = max_effort_;
+    int idx_v = joint_idx_v_[i];
     for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
       if (dynamics_->getJointName(j) == joint_name) {
         double urdf_limit = dynamics_->getEffortLimit(j);
@@ -159,13 +176,15 @@ controller_interface::CallbackReturn JointImpedanceControllerPlugin::on_configur
     // Store in map
     joint_gains_[joint_name] = {joint_stiffness, joint_damping, effort_limit};
     
-    // Update gain vectors
-    stiffness_vec_[i] = joint_stiffness;
-    damping_vec_[i] = joint_damping;
+    // Update gain vectors using Pinocchio velocity index (NOT loop index i)
+    if (idx_v >= 0 && idx_v < stiffness_vec_.size()) {
+      stiffness_vec_[idx_v] = joint_stiffness;
+      damping_vec_[idx_v] = joint_damping;
+    }
     
     RCLCPP_INFO(get_node()->get_logger(), 
-                "Joint %s: Kp=%.2f, Kd=%.2f, Effort Limit=%.2f",
-                joint_name.c_str(), joint_stiffness, joint_damping, effort_limit);
+                "Joint %s: Kp=%.2f, Kd=%.2f, Effort Limit=%.2f, idx_v=%d",
+                joint_name.c_str(), joint_stiffness, joint_damping, effort_limit, idx_v);
   }
 
   // Create subscriber for target commands with realtime buffer
@@ -208,6 +227,8 @@ controller_interface::CallbackReturn JointImpedanceControllerPlugin::on_activate
   // Reset flags
   target_received_ = false;
   initial_pose_captured_ = false;
+  velocity_initialized_ = false;
+  warmup_counter_ = 0;
 
   RCLCPP_INFO(get_node()->get_logger(), 
               "JointImpedanceController activated. Waiting to capture initial pose...");
@@ -244,34 +265,71 @@ controller_interface::return_type JointImpedanceControllerPlugin::update(
     double q_current = state_interfaces_[2 * i].get_value();      // position
     double v_current = state_interfaces_[2 * i + 1].get_value();  // velocity
     
-    // Find the velocity index in the full model
-    int idx_v = -1;
-    for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
-      if (dynamics_->getJointName(j) == joint_names_[i]) {
-        idx_v = dynamics_->getJointIdxV(j);
-        break;
-      }
-    }
+    int idx_v = joint_idx_v_[i];
     
     if (idx_v >= 0 && idx_v < q_.size()) {
       q_[idx_v] = q_current;
       v_[idx_v] = v_current;
       
-      // Apply low-pass filter to velocity (heavy filtering for smooth damping)
+      // Apply low-pass filter to velocity (filtering for smooth damping)
       v_filtered_[idx_v] = (1.0 - velocity_filter_alpha_) * v_current + 
                            velocity_filter_alpha_ * v_filtered_[idx_v];
     }
   }
 
-  // CRITICAL: Update dynamics state with FILTERED velocity for smooth damping
+  // Initialize v_filtered_ from first real measurement to avoid startup transient
+  if (!velocity_initialized_) {
+    v_filtered_ = v_;
+    velocity_initialized_ = true;
+  }
+
+  // Update dynamics state with FILTERED velocity, then compute gravity
   dynamics_->updateState(q_, v_filtered_);
+  Eigen::VectorXd tau_gravity = dynamics_->computeGravity();
 
   // Capture initial pose if not done yet
-  if (!initial_pose_captured_ && !target_received_) {
+  if (!initial_pose_captured_) {
     q_desired_ = q_;
     v_desired_ = Eigen::VectorXd::Zero(dynamics_->getNv());
     initial_pose_captured_ = true;
     RCLCPP_INFO(get_node()->get_logger(), "Initial pose captured for impedance control");
+    
+    // Log gravity torques for diagnostics
+    std::ostringstream oss;
+    oss << "Gravity torques at initial pose: [";
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+      int idx_v = joint_idx_v_[i];
+      if (idx_v >= 0 && idx_v < tau_gravity.size()) {
+        oss << joint_names_[i] << "=" << std::fixed << std::setprecision(2) << tau_gravity[idx_v];
+      }
+      if (i + 1 < joint_names_.size()) oss << ", ";
+    }
+    oss << "]";
+    RCLCPP_INFO(get_node()->get_logger(), "%s", oss.str().c_str());
+  }
+
+  // Gravity-only warmup: apply only gravity compensation for first WARMUP_CYCLES
+  // This lets the system settle before engaging spring/damping terms
+  if (warmup_counter_ < WARMUP_CYCLES) {
+    warmup_counter_++;
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+      int idx_v = joint_idx_v_[i];
+      double effort_limit = joint_gains_[joint_names_[i]].effort_limit;
+      if (idx_v >= 0 && idx_v < tau_gravity.size()) {
+        double clamped = std::max(-effort_limit, std::min(tau_gravity[idx_v], effort_limit));
+        command_interfaces_[i].set_value(clamped);
+      } else {
+        command_interfaces_[i].set_value(0.0);
+      }
+    }
+    if (warmup_counter_ == WARMUP_CYCLES) {
+      // Re-capture pose after warmup (arm may have settled slightly)
+      q_desired_ = q_;
+      RCLCPP_INFO(get_node()->get_logger(),
+                  "Warmup complete (%d cycles). Re-captured pose. Engaging impedance control.",
+                  WARMUP_CYCLES);
+    }
+    return controller_interface::return_type::OK;
   }
 
   // Read target command from realtime buffer
@@ -282,11 +340,11 @@ controller_interface::return_type JointImpedanceControllerPlugin::update(
     for (size_t i = 0; i < (*target_msg)->name.size(); ++i) {
       const std::string& name = (*target_msg)->name[i];
       
-      // Find the velocity index in the full model
+      // Use cached mapping: find idx_v for this target joint name
       int idx_v = -1;
-      for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
-        if (dynamics_->getJointName(j) == name) {
-          idx_v = dynamics_->getJointIdxV(j);
+      for (size_t k = 0; k < joint_names_.size(); ++k) {
+        if (joint_names_[k] == name) {
+          idx_v = joint_idx_v_[k];
           break;
         }
       }
@@ -301,30 +359,6 @@ controller_interface::return_type JointImpedanceControllerPlugin::update(
         }
       }
     }
-  }
-
-  // Compute gravity compensation
-  Eigen::VectorXd tau_gravity = dynamics_->computeGravity();
-
-  // If initial pose not captured, only apply gravity compensation
-  if (!initial_pose_captured_ && !target_received_) {
-    for (size_t i = 0; i < joint_names_.size(); ++i) {
-      // Find the velocity index in the full model
-      int idx_v = -1;
-      for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
-        if (dynamics_->getJointName(j) == joint_names_[i]) {
-          idx_v = dynamics_->getJointIdxV(j);
-          break;
-        }
-      }
-      
-      if (idx_v >= 0 && idx_v < tau_gravity.size()) {
-        command_interfaces_[i].set_value(tau_gravity[idx_v]);
-      } else {
-        command_interfaces_[i].set_value(0.0);
-      }
-    }
-    return controller_interface::return_type::OK;
   }
 
   // Compute position and velocity errors
@@ -351,27 +385,35 @@ controller_interface::return_type JointImpedanceControllerPlugin::update(
   Eigen::VectorXd tau_damping = damping_vec_.cwiseProduct(v_error);
   Eigen::VectorXd tau_impedance = tau_position + tau_damping;
 
-  // Total torque
+  // Total torque (used for feedback only; actual command uses damping-priority below)
   Eigen::VectorXd tau_total = tau_gravity + tau_impedance;
 
-  // Apply per-joint effort limits and write to command interfaces
-  // Map from full tau_total vector to controlled joints
+  // Damping-priority torque allocation:
+  // Clamp (gravity + spring) FIRST to reserve headroom for damping.
+  // This prevents torque saturation from eating the damping budget,
+  // which would cause undamped limit-cycle oscillations.
   for (size_t i = 0; i < joint_names_.size(); ++i) {
-    // Find the velocity index in the full model
-    int idx_v = -1;
-    for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
-      if (dynamics_->getJointName(j) == joint_names_[i]) {
-        idx_v = dynamics_->getJointIdxV(j);
-        break;
-      }
-    }
+    int idx_v = joint_idx_v_[i];
     
     if (idx_v >= 0 && idx_v < tau_total.size()) {
       double effort_limit = joint_gains_[joint_names_[i]].effort_limit;
-      double clamped_effort = std::max(-effort_limit, 
-                                       std::min(tau_total[idx_v], effort_limit));
+      double kd = damping_vec_[idx_v];
       
-      command_interfaces_[i].set_value(clamped_effort);
+      // Reserve headroom for damping: Kd * velocity_saturation
+      double damping_reserve = kd * velocity_saturation_;
+      double base_limit = std::max(0.0, effort_limit - damping_reserve);
+      
+      // Clamp gravity + spring to the reduced limit
+      double tau_base = tau_gravity[idx_v] + tau_position[idx_v];
+      tau_base = std::max(-base_limit, std::min(tau_base, base_limit));
+      
+      // Add damping (full range available within remaining headroom)
+      double tau_cmd = tau_base + tau_damping[idx_v];
+      
+      // Final safety clamp to effort limit
+      tau_cmd = std::max(-effort_limit, std::min(tau_cmd, effort_limit));
+      
+      command_interfaces_[i].set_value(tau_cmd);
     } else {
       command_interfaces_[i].set_value(0.0);
     }
@@ -385,14 +427,7 @@ controller_interface::return_type JointImpedanceControllerPlugin::update(
     feedback_msg->effort.resize(joint_names_.size());
     
     for (size_t i = 0; i < joint_names_.size(); ++i) {
-      // Find the velocity index for feedback
-      int idx_v = -1;
-      for (int j = 1; j < dynamics_->getNumJoints() + 1; ++j) {
-        if (dynamics_->getJointName(j) == joint_names_[i]) {
-          idx_v = dynamics_->getJointIdxV(j);
-          break;
-        }
-      }
+      int idx_v = joint_idx_v_[i];
       
       if (idx_v >= 0 && idx_v < tau_impedance.size()) {
         feedback_msg->effort[i] = tau_impedance[idx_v];
