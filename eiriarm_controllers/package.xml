@@ -21,6 +21,9 @@
   <depend>pluginlib</depend>
   <depend>realtime_tools</depend>
   
+  <!-- Geometry messages for Cartesian control -->
+  <depend>geometry_msgs</depend>
+  
   <!-- Dynamics computation -->
   <depend>pinocchio</depend>
 

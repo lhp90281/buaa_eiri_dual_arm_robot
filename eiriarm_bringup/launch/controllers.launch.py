@@ -9,6 +9,9 @@ Usage:
   # Gravity compensation controller
   ros2 launch eiriarm_bringup controllers.launch.py controller_type:=gravity_compensation
 
+  # Cartesian position controller
+  ros2 launch eiriarm_bringup controllers.launch.py controller_type:=cartesian_position
+
   # With gripper controller
   ros2 launch eiriarm_bringup controllers.launch.py enable_gripper:=true
 """
@@ -52,9 +55,16 @@ def launch_setup(context, *args, **kwargs):
             'ros2_control_controllers.yaml'
         ])
         controllers_to_start = ['gravity_compensation_controller']
+    elif controller_type == 'cartesian_position':
+        config_file = PathJoinSubstitution([
+            FindPackageShare('eiriarm_controllers'),
+            'config',
+            'ros2_control_controllers.yaml'
+        ])
+        controllers_to_start = ['cartesian_position_controller']
     else:
         raise ValueError(f"Unknown controller_type: {controller_type}. "
-                        f"Valid options: impedance, gravity_compensation")
+                        f"Valid options: impedance, gravity_compensation, cartesian_position")
     
     # Robot state publisher
     robot_state_publisher = Node(
@@ -123,7 +133,7 @@ def generate_launch_description():
     controller_type_arg = DeclareLaunchArgument(
         'controller_type',
         default_value='impedance',
-        description='Controller type: impedance or gravity_compensation'
+        description='Controller type: impedance, gravity_compensation, or cartesian_position'
     )
     
     enable_gripper_arg = DeclareLaunchArgument(

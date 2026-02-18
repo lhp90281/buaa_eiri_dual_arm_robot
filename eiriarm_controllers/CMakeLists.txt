@@ -16,6 +16,7 @@ find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(realtime_tools REQUIRED)
 find_package(pinocchio REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 include_directories(include)
 
@@ -97,6 +98,32 @@ ament_target_dependencies(joint_impedance_controller_plugin
   sensor_msgs
 )
 
+# Cartesian Position Controller Plugin
+add_library(cartesian_position_controller_plugin SHARED
+  src/cartesian_position_controller_plugin.cpp
+)
+
+target_include_directories(cartesian_position_controller_plugin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(cartesian_position_controller_plugin 
+  eiriarm_dynamics
+  pinocchio::pinocchio
+)
+
+ament_target_dependencies(cartesian_position_controller_plugin
+  rclcpp
+  rclcpp_lifecycle
+  controller_interface
+  hardware_interface
+  pluginlib
+  realtime_tools
+  sensor_msgs
+  geometry_msgs
+)
+
 # Topic-based Hardware Interface (Bridge for topic-based systems)
 add_library(topic_based_hardware_interface SHARED
   src/topic_based_hardware_interface.cpp
@@ -124,6 +151,7 @@ pluginlib_export_plugin_description_file(hardware_interface eiriarm_hardware_int
 install(TARGETS 
   gravity_compensation_controller
   joint_impedance_controller_plugin
+  cartesian_position_controller_plugin
   topic_based_hardware_interface
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -147,14 +175,17 @@ install(TARGETS gripper_controller_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install Python scripts
-install(PROGRAMS scripts/joint_monitor.py
+# Install Python scripts (if they exist)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gripper_keyboard_control.py")
+  install(PROGRAMS scripts/gripper_keyboard_control.py
+    DESTINATION lib/${PROJECT_NAME}
+    RENAME gripper_keyboard_control
+  )
+endif()
+
+install(PROGRAMS scripts/cartesian_keyboard_control.py
   DESTINATION lib/${PROJECT_NAME}
-  RENAME joint_monitor
-)
-install(PROGRAMS scripts/gripper_test_plot.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME gripper_test_plot
+  RENAME cartesian_keyboard_control
 )
 
 # ============================================================================

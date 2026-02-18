@@ -21,3 +21,15 @@
     </description>
   </class>
 </library>
+
+<library path="cartesian_position_controller_plugin">
+  <class name="eiriarm_controllers/CartesianPositionControllerPlugin"
+         type="eiriarm_controllers::CartesianPositionControllerPlugin"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Cartesian Position Controller using Pinocchio IK.
+      Receives target end-effector poses, solves IK, and sends joint positions
+      to MuJoCo position actuators. Supports dual-arm independent control.
+    </description>
+  </class>
+</library>

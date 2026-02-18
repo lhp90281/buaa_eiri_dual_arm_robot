@@ -6,6 +6,7 @@
 #include <Eigen/Dense>
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/multibody/data.hpp>
+#include <pinocchio/spatial/se3.hpp>
 
 namespace eiriarm_dynamics
 {
@@ -113,6 +114,76 @@ public:
    * @brief Get neutral configuration
    */
   Eigen::VectorXd getNeutralConfiguration() const;
+
+  /**
+   * @brief Get frame ID by name
+   * @param frame_name Name of the frame (link name from URDF)
+   * @return Frame index, or -1 if not found
+   */
+  int getFrameId(const std::string& frame_name) const;
+
+  /**
+   * @brief Compute forward kinematics for a specific frame
+   * @param frame_id Frame index from getFrameId()
+   * @return SE3 transform of the frame in world coordinates
+   */
+  pinocchio::SE3 computeFK(int frame_id);
+
+  /**
+   * @brief Compute the 6xN frame Jacobian in LOCAL_WORLD_ALIGNED convention
+   * @param frame_id Frame index
+   * @return 6xNv Jacobian matrix [linear; angular]
+   */
+  Eigen::MatrixXd computeFrameJacobian(int frame_id);
+
+  /**
+   * @brief Solve inverse kinematics using damped least-squares (CLIK)
+   * @param frame_id Target frame index
+   * @param target_pose Desired SE3 pose
+   * @param q_init Initial joint configuration guess
+   * @param q_result Output: solved joint configuration
+   * @param max_iter Maximum IK iterations (default 100)
+   * @param eps Convergence threshold (default 1e-4)
+   * @param damping Damping factor for singularity robustness (default 1e-3)
+   * @param dt Step size (default 1.0)
+   * @return true if converged within max_iter
+   */
+  bool solveIK(
+    int frame_id,
+    const pinocchio::SE3& target_pose,
+    const Eigen::VectorXd& q_init,
+    Eigen::VectorXd& q_result,
+    int max_iter = 100,
+    double eps = 1e-4,
+    double damping = 1e-3,
+    double dt = 1.0);
+
+  /**
+   * @brief Solve position-only IK (ignores orientation)
+   * @param frame_id Target frame index
+   * @param target_position Desired 3D position in world frame
+   * @param q_init Initial joint configuration guess
+   * @param q_result Output: solved joint configuration
+   * @param max_iter Maximum IK iterations (default 100)
+   * @param eps Convergence threshold in meters (default 1e-4)
+   * @param damping Damping factor (default 1e-3)
+   * @param dt Step size (default 1.0)
+   * @return true if converged within max_iter
+   */
+  bool solveIKPosition(
+    int frame_id,
+    const Eigen::Vector3d& target_position,
+    const Eigen::VectorXd& q_init,
+    Eigen::VectorXd& q_result,
+    int max_iter = 100,
+    double eps = 1e-4,
+    double damping = 1e-3,
+    double dt = 1.0);
+
+  /**
+   * @brief Get the Pinocchio model (const reference)
+   */
+  const pinocchio::Model& getModel() const { return model_; }
 
 private:
   pinocchio::Model model_;

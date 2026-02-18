@@ -2,6 +2,10 @@
 #include <pinocchio/parsers/urdf.hpp>
 #include <pinocchio/algorithm/rnea.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
+#include <pinocchio/algorithm/kinematics.hpp>
+#include <pinocchio/algorithm/frames.hpp>
+#include <pinocchio/algorithm/jacobian.hpp>
+#include <pinocchio/spatial/explog.hpp>
 #include <stdexcept>
 
 namespace eiriarm_dynamics
@@ -144,6 +148,196 @@ Eigen::VectorXd EiriarmDynamics::getNeutralConfiguration() const
     return Eigen::VectorXd();
   }
   return pinocchio::neutral(model_);
+}
+
+int EiriarmDynamics::getFrameId(const std::string& frame_name) const
+{
+  if (!initialized_) {
+    return -1;
+  }
+  
+  if (!model_.existFrame(frame_name)) {
+    return -1;
+  }
+  
+  return static_cast<int>(model_.getFrameId(frame_name));
+}
+
+pinocchio::SE3 EiriarmDynamics::computeFK(int frame_id)
+{
+  if (!initialized_) {
+    throw std::runtime_error("EiriarmDynamics not initialized");
+  }
+  
+  if (frame_id < 0 || frame_id >= static_cast<int>(model_.nframes)) {
+    throw std::runtime_error("Invalid frame_id for FK");
+  }
+  
+  // Compute forward kinematics
+  pinocchio::forwardKinematics(model_, *data_, q_current_);
+  pinocchio::updateFramePlacement(model_, *data_, static_cast<pinocchio::FrameIndex>(frame_id));
+  
+  return data_->oMf[frame_id];
+}
+
+Eigen::MatrixXd EiriarmDynamics::computeFrameJacobian(int frame_id)
+{
+  if (!initialized_) {
+    throw std::runtime_error("EiriarmDynamics not initialized");
+  }
+  
+  if (frame_id < 0 || frame_id >= static_cast<int>(model_.nframes)) {
+    throw std::runtime_error("Invalid frame_id for Jacobian");
+  }
+  
+  // Compute joint Jacobian in LOCAL_WORLD_ALIGNED frame
+  Eigen::MatrixXd J = Eigen::MatrixXd::Zero(6, model_.nv);
+  pinocchio::computeFrameJacobian(
+    model_, *data_, q_current_,
+    static_cast<pinocchio::FrameIndex>(frame_id),
+    pinocchio::LOCAL_WORLD_ALIGNED, J);
+  
+  return J;
+}
+
+bool EiriarmDynamics::solveIK(
+  int frame_id,
+  const pinocchio::SE3& target_pose,
+  const Eigen::VectorXd& q_init,
+  Eigen::VectorXd& q_result,
+  int max_iter,
+  double eps,
+  double damping,
+  double dt)
+{
+  if (!initialized_) {
+    throw std::runtime_error("EiriarmDynamics not initialized");
+  }
+  
+  if (frame_id < 0 || frame_id >= static_cast<int>(model_.nframes)) {
+    throw std::runtime_error("Invalid frame_id for IK");
+  }
+  
+  if (q_init.size() != model_.nq) {
+    throw std::runtime_error("q_init size mismatch");
+  }
+  
+  q_result = q_init;
+  pinocchio::FrameIndex fid = static_cast<pinocchio::FrameIndex>(frame_id);
+  
+  Eigen::MatrixXd J(6, model_.nv);
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    // Compute FK at current q
+    pinocchio::forwardKinematics(model_, *data_, q_result);
+    pinocchio::updateFramePlacement(model_, *data_, fid);
+    
+    // Compute pose error in body frame: current^{-1} * target
+    pinocchio::SE3 iMd = data_->oMf[fid].actInv(target_pose);
+    Eigen::Matrix<double, 6, 1> err = pinocchio::log6(iMd).toVector();
+    
+    // Check convergence
+    if (err.norm() < eps) {
+      return true;
+    }
+    
+    // Compute Jacobian at current q (LOCAL frame to match log6 body-frame error)
+    J.setZero();
+    pinocchio::computeFrameJacobian(
+      model_, *data_, q_result, fid,
+      pinocchio::LOCAL, J);
+    
+    // Damped least-squares: dq = J^T * (J * J^T + lambda^2 * I)^{-1} * err
+    Eigen::MatrixXd JJt = J * J.transpose();
+    JJt.diagonal().array() += damping * damping;
+    
+    Eigen::VectorXd dq = J.transpose() * JJt.ldlt().solve(err);
+    
+    // Update q with step size
+    q_result = pinocchio::integrate(model_, q_result, dt * dq);
+    
+    // Clamp to joint limits
+    for (int i = 0; i < model_.nq; ++i) {
+      if (model_.lowerPositionLimit[i] < model_.upperPositionLimit[i]) {
+        q_result[i] = std::max(model_.lowerPositionLimit[i],
+                               std::min(q_result[i], model_.upperPositionLimit[i]));
+      }
+    }
+  }
+  
+  // Did not converge, but return best result
+  return false;
+}
+
+bool EiriarmDynamics::solveIKPosition(
+  int frame_id,
+  const Eigen::Vector3d& target_position,
+  const Eigen::VectorXd& q_init,
+  Eigen::VectorXd& q_result,
+  int max_iter,
+  double eps,
+  double damping,
+  double dt)
+{
+  if (!initialized_) {
+    throw std::runtime_error("EiriarmDynamics not initialized");
+  }
+  
+  if (frame_id < 0 || frame_id >= static_cast<int>(model_.nframes)) {
+    throw std::runtime_error("Invalid frame_id for IK");
+  }
+  
+  if (q_init.size() != model_.nq) {
+    throw std::runtime_error("q_init size mismatch");
+  }
+  
+  q_result = q_init;
+  pinocchio::FrameIndex fid = static_cast<pinocchio::FrameIndex>(frame_id);
+  
+  Eigen::MatrixXd J_full(6, model_.nv);
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    // Compute FK at current q
+    pinocchio::forwardKinematics(model_, *data_, q_result);
+    pinocchio::updateFramePlacement(model_, *data_, fid);
+    
+    // Position error only (3D, in world frame)
+    Eigen::Vector3d err = target_position - data_->oMf[fid].translation();
+    
+    // Check convergence
+    if (err.norm() < eps) {
+      return true;
+    }
+    
+    // Compute full Jacobian, then extract linear part (top 3 rows) in world frame
+    J_full.setZero();
+    pinocchio::computeFrameJacobian(
+      model_, *data_, q_result, fid,
+      pinocchio::LOCAL_WORLD_ALIGNED, J_full);
+    
+    // Use only the linear (translation) part: rows 0-2
+    Eigen::MatrixXd Jv = J_full.topRows(3);  // 3 x nv
+    
+    // Damped least-squares: dq = Jv^T * (Jv * Jv^T + lambda^2 * I)^{-1} * err
+    Eigen::Matrix3d JJt = Jv * Jv.transpose();
+    JJt.diagonal().array() += damping * damping;
+    
+    Eigen::VectorXd dq = Jv.transpose() * JJt.ldlt().solve(err);
+    
+    // Update q with step size
+    q_result = pinocchio::integrate(model_, q_result, dt * dq);
+    
+    // Clamp to joint limits
+    for (int i = 0; i < model_.nq; ++i) {
+      if (model_.lowerPositionLimit[i] < model_.upperPositionLimit[i]) {
+        q_result[i] = std::max(model_.lowerPositionLimit[i],
+                               std::min(q_result[i], model_.upperPositionLimit[i]));
+      }
+    }
+  }
+  
+  // Did not converge, but return best result
+  return false;
 }
 
 }  // namespace eiriarm_dynamics

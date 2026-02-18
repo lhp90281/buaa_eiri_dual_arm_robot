@@ -398,9 +398,11 @@ int main(int argc, char** argv) {
   );
 
 
-  // 读取yaml路径
+  // 读取yaml路径 (支持通过环境变量 EIRIARM_MUJOCO_CONFIG 切换配置文件)
   const std::string mujoco_pkg_path = ament_index_cpp::get_package_share_directory("eiriarm_mujoco"); // 获取包路径
-  const std::string yaml_path = mujoco_pkg_path + "/config/simulate.yaml"; // 拼接yaml路径
+  const char* config_env = std::getenv("EIRIARM_MUJOCO_CONFIG");
+  const std::string config_filename = config_env ? config_env : "simulate.yaml";
+  const std::string yaml_path = mujoco_pkg_path + "/config/" + config_filename; // 拼接yaml路径
   YAML::Node config = YAML::LoadFile(yaml_path)["mujoco_simulator"];
 
   // 读取mjcf路径

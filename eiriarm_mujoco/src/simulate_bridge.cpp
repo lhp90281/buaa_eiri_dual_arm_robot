@@ -17,9 +17,11 @@ SimulateBridge::SimulateBridge(mjData* d, mjModel* m, mujoco::Simulate& sim) : N
     // 修改仿真参数
     mj_model_->opt.timestep = 0.001; // 修改仿真频率为1KHz
 
-    // 从yaml中读取参数
+    // 从yaml中读取参数 (支持通过环境变量 EIRIARM_MUJOCO_CONFIG 切换配置文件)
     const std::string pkg_path = ament_index_cpp::get_package_share_directory("eiriarm_mujoco"); // 获取包路径
-    const std::string yaml_path = pkg_path + "/config/simulate.yaml"; // 拼接yaml路径
+    const char* config_env = std::getenv("EIRIARM_MUJOCO_CONFIG");
+    const std::string config_filename = config_env ? config_env : "simulate.yaml";
+    const std::string yaml_path = pkg_path + "/config/" + config_filename; // 拼接yaml路径
     YAML::Node config = YAML::LoadFile(yaml_path)["mujoco_simulator"];
     jointCommandsTopic_ = config["jointCommandsTopic"].as<std::string>();
     UnPauseServiceService_ = config["unPauseService"].as<std::string>();

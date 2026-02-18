@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Complete System Launch File
+"""Complete System Launch File
 Starts MuJoCo simulation and controllers together.
 
 Usage:
@@ -10,36 +9,31 @@ Usage:
   # Gravity compensation controller
   ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
 
+  # Cartesian position controller (uses position actuator MJCF)
+  ros2 launch eiriarm_bringup system.launch.py controller_type:=cartesian_position
+
   # Disable gripper controller
   ros2 launch eiriarm_bringup system.launch.py enable_gripper:=false
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction, SetEnvironmentVariable, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
 
-def generate_launch_description():
-    # Declare launch arguments
-    controller_type_arg = DeclareLaunchArgument(
-        'controller_type',
-        default_value='impedance',
-        description='Controller type: impedance or gravity_compensation'
-    )
+def launch_setup(context, *args, **kwargs):
+    controller_type = LaunchConfiguration('controller_type').perform(context)
     
-    gui_arg = DeclareLaunchArgument(
-        'gui',
-        default_value='true',
-        description='Enable MuJoCo GUI'
-    )
+    # Select MuJoCo config based on controller type
+    if controller_type == 'cartesian_position':
+        mujoco_config = 'simulate_position.yaml'
+    else:
+        mujoco_config = 'simulate.yaml'
     
-    enable_gripper_arg = DeclareLaunchArgument(
-        'enable_gripper',
-        default_value='true',
-        description='Enable gripper controller'
-    )
+    # Set environment variable for MuJoCo config file selection
+    set_config_env = SetEnvironmentVariable('EIRIARM_MUJOCO_CONFIG', mujoco_config)
     
     # Include MuJoCo simulation
     mujoco_launch = IncludeLaunchDescription(
@@ -75,10 +69,32 @@ def generate_launch_description():
         ]
     )
     
+    return [set_config_env, mujoco_launch, controllers_launch]
+
+
+def generate_launch_description():
+    # Declare launch arguments
+    controller_type_arg = DeclareLaunchArgument(
+        'controller_type',
+        default_value='impedance',
+        description='Controller type: impedance, gravity_compensation, or cartesian_position'
+    )
+    
+    gui_arg = DeclareLaunchArgument(
+        'gui',
+        default_value='true',
+        description='Enable MuJoCo GUI'
+    )
+    
+    enable_gripper_arg = DeclareLaunchArgument(
+        'enable_gripper',
+        default_value='true',
+        description='Enable gripper controller'
+    )
+    
     return LaunchDescription([
         controller_type_arg,
         gui_arg,
         enable_gripper_arg,
-        mujoco_launch,
-        controllers_launch,
+        OpaqueFunction(function=launch_setup),
     ])
