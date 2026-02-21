@@ -168,15 +168,23 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
       this->rightTargetCallback(msg);
     });
 
+  // Create homing subscriber
+  homing_sub_ = get_node()->create_subscription<std_msgs::msg::String>(
+    "~/joint_homing", 10,
+    [this](const std_msgs::msg::String::SharedPtr msg) {
+      this->homingCallback(msg);
+    });
+
   // Create feedback publisher
   feedback_pub_ = get_node()->create_publisher<sensor_msgs::msg::JointState>(
     "~/joint_position_feedback", 10);
+  homing_status_pub_ = get_node()->create_publisher<std_msgs::msg::String>(
+    "~/homing_status", 10);
 
   // Initialize realtime buffers
   auto empty_msg = std::make_shared<geometry_msgs::msg::PoseStamped>();
   rt_left_target_.writeFromNonRT(empty_msg);
   rt_right_target_.writeFromNonRT(empty_msg);
-
   RCLCPP_INFO(get_node()->get_logger(), "CartesianPositionController configured successfully");
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -202,6 +210,9 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_activ
   left_target_received_ = false;
   right_target_received_ = false;
   initial_pose_captured_ = false;
+  homing_requested_.store(false);
+  homing_left_ = false;
+  homing_right_ = false;
 
   RCLCPP_INFO(get_node()->get_logger(), 
               "CartesianPositionController activated. Waiting to capture initial pose...");
@@ -230,6 +241,15 @@ void CartesianPositionControllerPlugin::rightTargetCallback(
   right_target_received_ = true;
 }
 
+void CartesianPositionControllerPlugin::homingCallback(
+  const std_msgs::msg::String::SharedPtr msg)
+{
+  if (!msg->data.empty()) {
+    homing_request_arm_ = msg->data;  // "left", "right", or "both"
+    homing_requested_.store(true);
+  }
+}
+
 controller_interface::return_type CartesianPositionControllerPlugin::update(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
@@ -252,6 +272,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
   if (!initial_pose_captured_) {
     q_desired_ = q_;
     q_command_ = q_;
+    q_home_ = q_;  // Save home configuration for joint-level homing
     initial_pose_captured_ = true;
     
     // Log initial EE poses
@@ -272,12 +293,89 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     RCLCPP_INFO(get_node()->get_logger(), "Initial pose captured for Cartesian position control");
   }
 
+  // Handle homing request
+  if (homing_requested_.exchange(false)) {
+    std::string arm = homing_request_arm_;
+    bool do_left = (arm == "left" || arm == "both");
+    bool do_right = (arm == "right" || arm == "both");
+    if (do_left) {
+      homing_left_ = true;
+      for (size_t i = 0; i < joint_names_.size(); ++i) {
+        if (joint_names_[i].find("left_") == 0) {
+          int idx_v = joint_idx_v_[i];
+          if (idx_v >= 0 && idx_v < q_desired_.size()) {
+            q_desired_[idx_v] = q_home_[idx_v];
+          }
+        }
+      }
+    }
+    if (do_right) {
+      homing_right_ = true;
+      for (size_t i = 0; i < joint_names_.size(); ++i) {
+        if (joint_names_[i].find("right_") == 0) {
+          int idx_v = joint_idx_v_[i];
+          if (idx_v >= 0 && idx_v < q_desired_.size()) {
+            q_desired_[idx_v] = q_home_[idx_v];
+          }
+        }
+      }
+    }
+    RCLCPP_INFO(get_node()->get_logger(), "Joint homing started for arm: %s", arm.c_str());
+    auto status_msg = std::make_unique<std_msgs::msg::String>();
+    status_msg->data = arm;  // echo which arm is homing
+    homing_status_pub_->publish(std::move(status_msg));
+  }
+
+  // Check homing completion per arm
+  if (homing_left_) {
+    bool at_home = true;
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+      if (joint_names_[i].find("left_") == 0) {
+        int idx_v = joint_idx_v_[i];
+        if (idx_v >= 0 && std::abs(q_command_[idx_v] - q_home_[idx_v]) > 0.01) {
+          at_home = false;
+          break;
+        }
+      }
+    }
+    if (at_home) {
+      homing_left_ = false;
+      RCLCPP_INFO(get_node()->get_logger(), "Left arm homing complete");
+      if (!homing_right_) {
+        auto status_msg = std::make_unique<std_msgs::msg::String>();
+        status_msg->data = "done";
+        homing_status_pub_->publish(std::move(status_msg));
+      }
+    }
+  }
+  if (homing_right_) {
+    bool at_home = true;
+    for (size_t i = 0; i < joint_names_.size(); ++i) {
+      if (joint_names_[i].find("right_") == 0) {
+        int idx_v = joint_idx_v_[i];
+        if (idx_v >= 0 && std::abs(q_command_[idx_v] - q_home_[idx_v]) > 0.01) {
+          at_home = false;
+          break;
+        }
+      }
+    }
+    if (at_home) {
+      homing_right_ = false;
+      RCLCPP_INFO(get_node()->get_logger(), "Right arm homing complete");
+      if (!homing_left_) {
+        auto status_msg = std::make_unique<std_msgs::msg::String>();
+        status_msg->data = "done";
+        homing_status_pub_->publish(std::move(status_msg));
+      }
+    }
+  }
+
   // Update dynamics state for IK computations
   dynamics_->updateState(q_, v_);
 
-  // Process left arm target
+  // Process left arm target (skip if left arm is homing)
   auto left_msg = rt_left_target_.readFromRT();
-  if (left_msg && (*left_msg) && left_target_received_) {
+  if (!homing_left_ && left_msg && (*left_msg) && left_target_received_) {
     const auto& pose = (*left_msg)->pose;
     
     Eigen::Quaterniond quat(pose.orientation.w, pose.orientation.x,
@@ -296,6 +394,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
       q_ik_result, ik_max_iter_, ik_eps_, ik_damping_, ik_dt_);
     
     if (ik_success) {
+      // Only write back on convergence to prevent seed corruption
       for (size_t i = 0; i < joint_names_.size(); ++i) {
         if (joint_names_[i].find("left_") == 0) {
           int idx_v = joint_idx_v_[i];
@@ -305,25 +404,15 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
         }
       }
     } else {
-      try {
-        pinocchio::SE3 current_pose = dynamics_->computeFK(left_frame_id_);
-        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
-                             "Left arm IK did not converge. "
-                             "Target: [%.3f, %.3f, %.3f], Current EE: [%.3f, %.3f, %.3f]",
-                             trans[0], trans[1], trans[2],
-                             current_pose.translation()[0],
-                             current_pose.translation()[1],
-                             current_pose.translation()[2]);
-      } catch (...) {
-        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
-                             "Left arm IK did not converge");
-      }
+      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
+                           "Left arm IK did not converge. Target: [%.3f, %.3f, %.3f]",
+                           trans[0], trans[1], trans[2]);
     }
   }
 
-  // Process right arm target
+  // Process right arm target (skip if right arm is homing)
   auto right_msg = rt_right_target_.readFromRT();
-  if (right_msg && (*right_msg) && right_target_received_) {
+  if (!homing_right_ && right_msg && (*right_msg) && right_target_received_) {
     const auto& pose = (*right_msg)->pose;
     
     Eigen::Quaterniond quat(pose.orientation.w, pose.orientation.x,
@@ -351,19 +440,9 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
         }
       }
     } else {
-      try {
-        pinocchio::SE3 current_pose = dynamics_->computeFK(right_frame_id_);
-        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
-                             "Right arm IK did not converge. "
-                             "Target: [%.3f, %.3f, %.3f], Current EE: [%.3f, %.3f, %.3f]",
-                             trans[0], trans[1], trans[2],
-                             current_pose.translation()[0],
-                             current_pose.translation()[1],
-                             current_pose.translation()[2]);
-      } catch (...) {
-        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
-                             "Right arm IK did not converge");
-      }
+      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
+                           "Right arm IK did not converge. Target: [%.3f, %.3f, %.3f]",
+                           trans[0], trans[1], trans[2]);
     }
   }
 

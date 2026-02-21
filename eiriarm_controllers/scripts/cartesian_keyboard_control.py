@@ -9,7 +9,7 @@ Rotation control (numpad with NumLock ON):
   8/2 : +/- Pitch (Y-axis)    4/6 : +/- Roll (X-axis)    7/9 : +/- Yaw (Z-axis)
 
 Arm selection:
-  Z : Left arm    X : Right arm    C : Both arms
+  Tab : Cycle (Left -> Right -> Both)
 
 Other:
   +/- : Step size    R : Reset pose    ESC/Ctrl+C : Exit
@@ -29,7 +29,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
-
+from std_msgs.msg import String
 # Attempt to import pinocchio for FK (optional, for display)
 try:
     import pinocchio
@@ -76,6 +76,10 @@ class CartesianKeyboardController(Node):
         self.move_pitch = 0  # -1, 0, +1  (around Y)
         self.move_yaw = 0    # -1, 0, +1  (around Z)
 
+        # Homing state
+        self.homing_active = False
+        self.homing_arm = ''  # which arm is homing: 'left'/'right'/'both'
+
         # Publishers
         self.left_pub = self.create_publisher(
             PoseStamped,
@@ -83,10 +87,16 @@ class CartesianKeyboardController(Node):
         self.right_pub = self.create_publisher(
             PoseStamped,
             '/cartesian_position_controller/right_target_pose', 10)
+        self.homing_pub = self.create_publisher(
+            String,
+            '/cartesian_position_controller/joint_homing', 10)
 
         # Subscribe to joint states to compute initial EE pose
         self.joint_sub = self.create_subscription(
             JointState, '/joint_states', self.joint_state_callback, 10)
+        self.homing_status_sub = self.create_subscription(
+            String, '/cartesian_position_controller/homing_status',
+            self.homing_status_callback, 10)
 
         self.initial_joint_state_received = False
         self.joint_positions = {}
@@ -98,6 +108,23 @@ class CartesianKeyboardController(Node):
 
         self.get_logger().info('Cartesian Keyboard Controller started')
         self.get_logger().info(f'Step size: {self.step_size:.4f} m, Update rate: {self.update_rate} Hz')
+
+    def homing_status_callback(self, msg):
+        """Handle homing status from controller."""
+        if msg.data == 'done':
+            # Homing complete - reset Cartesian targets for homed arm(s) to initial poses
+            if self.homing_arm in ('left', 'both') and self.left_init_pos:
+                self.left_pos = list(self.left_init_pos)
+                self.left_orient = list(self.left_init_orient)
+            if self.homing_arm in ('right', 'both') and self.right_init_pos:
+                self.right_pos = list(self.right_init_pos)
+                self.right_orient = list(self.right_init_orient)
+            self.homing_active = False
+            self.homing_arm = ''
+        else:
+            # Homing started for arm(s)
+            self.homing_active = True
+            self.homing_arm = msg.data
 
     def joint_state_callback(self, msg):
         """Receive joint states to initialize EE positions."""
@@ -193,7 +220,11 @@ class CartesianKeyboardController(Node):
         d_pitch = self.move_pitch * self.rot_step
         d_yaw = self.move_yaw * self.rot_step
 
-        if self.active_arm in ('left', 'both'):
+        # Skip publishing for arm(s) that are currently homing
+        left_homing = self.homing_arm in ('left', 'both')
+        right_homing = self.homing_arm in ('right', 'both')
+
+        if self.active_arm in ('left', 'both') and not left_homing:
             self.left_pos[0] += dx
             self.left_pos[1] += dy
             self.left_pos[2] += dz
@@ -202,7 +233,7 @@ class CartesianKeyboardController(Node):
                     self.left_orient, d_roll, d_pitch, d_yaw)
             self._publish_pose(self.left_pub, self.left_pos, self.left_orient)
 
-        if self.active_arm in ('right', 'both'):
+        if self.active_arm in ('right', 'both') and not right_homing:
             self.right_pos[0] += dx
             self.right_pos[1] += dy
             self.right_pos[2] += dz
@@ -223,7 +254,6 @@ class CartesianKeyboardController(Node):
         msg.pose.orientation.z = orient[2]
         msg.pose.orientation.w = orient[3]
         pub.publish(msg)
-
 
 def get_initial_ee_poses(node):
     """
@@ -298,12 +328,13 @@ def print_status(node):
         o = node.right_orient
     else:
         o = node.left_orient
+    homing_str = ' [HOMING]' if node.homing_active else ''
     sys.stdout.write(
         f'\r  [{arm_str}] pos:{node.step_size:.4f}m rot:{math.degrees(node.rot_step):.1f}deg  '
         f'L:[{node.left_pos[0]:+.3f},{node.left_pos[1]:+.3f},{node.left_pos[2]:+.3f}]  '
         f'R:[{node.right_pos[0]:+.3f},{node.right_pos[1]:+.3f},{node.right_pos[2]:+.3f}]  '
         f'T:[{node.move_x:+d},{node.move_y:+d},{node.move_z:+d}] '
-        f'R:[{node.move_roll:+d},{node.move_pitch:+d},{node.move_yaw:+d}]    ')
+        f'Rot:[{node.move_roll:+d},{node.move_pitch:+d},{node.move_yaw:+d}]{homing_str}    ')
     sys.stdout.flush()
 
 
@@ -317,8 +348,8 @@ def keyboard_loop(node):
     print("=" * 70)
     print("  Position:  W/S: +/-X    A/D: +/-Y    Q/E: +/-Z")
     print("  Rotation:  8/2: +/-Pitch  4/6: +/-Roll  7/9: +/-Yaw  (numpad)")
-    print("  Arm:       Z: Left    X: Right    C: Both")
-    print("  Other:     +/-: Step size    R: Reset    ESC: Exit")
+    print("  Arm:       Tab: cycle (Left/Right/Both)")
+    print("  Other:     +/-: Step size    R: Joint homing (all joints to zero)    ESC: Exit")
     print("=" * 70)
 
     try:
@@ -380,13 +411,10 @@ def keyboard_loop(node):
                     node.move_yaw = 1
                 elif ch == '9':
                     node.move_yaw = -1
-                # --- Arm selection ---
-                elif ch_lower == 'z':
-                    node.active_arm = 'left'
-                elif ch_lower == 'x':
-                    node.active_arm = 'right'
-                elif ch_lower == 'c':
-                    node.active_arm = 'both'
+                # --- Arm selection (Tab to cycle) ---
+                elif ch == '\t':
+                    cycle = {'left': 'right', 'right': 'both', 'both': 'left'}
+                    node.active_arm = cycle[node.active_arm]
                 # --- Step size ---
                 elif ch in ('+', '='):
                     node.step_size = min(node.step_size * 1.5, 0.05)
@@ -395,20 +423,16 @@ def keyboard_loop(node):
                     node.step_size = max(node.step_size / 1.5, 0.0005)
                     node.rot_step = max(node.rot_step / 1.5, 0.002)
                 elif ch_lower == 'r':
-                    # Reset to initial pose (with correct orientation)
-                    if node.left_init_pos:
-                        node.left_pos = list(node.left_init_pos)
-                        node.left_orient = list(node.left_init_orient)
-                    if node.right_init_pos:
-                        node.right_pos = list(node.right_init_pos)
-                        node.right_orient = list(node.right_init_orient)
+                    # Joint-level homing: command active arm joints to zero
+                    msg = String()
+                    msg.data = node.active_arm
+                    node.homing_pub.publish(msg)
                     node.move_x = 0
                     node.move_y = 0
                     node.move_z = 0
                     node.move_roll = 0
                     node.move_pitch = 0
                     node.move_yaw = 0
-
                 print_status(node)
             else:
                 # No key pressed - check if we should stop movement

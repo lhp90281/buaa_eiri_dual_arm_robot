@@ -236,7 +236,6 @@ bool EiriarmDynamics::solveIK(
     pinocchio::SE3 iMd = data_->oMf[fid].actInv(target_pose);
     Eigen::Matrix<double, 6, 1> err = pinocchio::log6(iMd).toVector();
     
-    // Check convergence
     if (err.norm() < eps) {
       return true;
     }
@@ -247,11 +246,12 @@ bool EiriarmDynamics::solveIK(
       model_, *data_, q_result, fid,
       pinocchio::LOCAL, J);
     
-    // Damped least-squares: dq = J^T * (J * J^T + lambda^2 * I)^{-1} * err
+    // Damped pseudoinverse: J_pinv = J^T * (J * J^T + lambda^2 * I)^{-1}
     Eigen::MatrixXd JJt = J * J.transpose();
     JJt.diagonal().array() += damping * damping;
+    Eigen::MatrixXd J_pinv = J.transpose() * JJt.ldlt().solve(Eigen::MatrixXd::Identity(6, 6));
     
-    Eigen::VectorXd dq = J.transpose() * JJt.ldlt().solve(err);
+    Eigen::VectorXd dq = J_pinv * err;
     
     // Update q with step size
     q_result = pinocchio::integrate(model_, q_result, dt * dq);
@@ -338,6 +338,61 @@ bool EiriarmDynamics::solveIKPosition(
   
   // Did not converge, but return best result
   return false;
+}
+
+Eigen::VectorXd EiriarmDynamics::applyNullSpaceMotion(
+  int frame_id,
+  const Eigen::VectorXd& q_in,
+  const Eigen::VectorXd& null_bias,
+  double alpha,
+  double damping)
+{
+  if (!initialized_) {
+    throw std::runtime_error("EiriarmDynamics not initialized");
+  }
+  if (frame_id < 0 || frame_id >= static_cast<int>(model_.nframes)) {
+    throw std::runtime_error("Invalid frame_id for null-space motion");
+  }
+  if (q_in.size() != model_.nq || null_bias.size() != model_.nv) {
+    throw std::runtime_error("Size mismatch in applyNullSpaceMotion");
+  }
+
+  pinocchio::FrameIndex fid = static_cast<pinocchio::FrameIndex>(frame_id);
+
+  // Compute FK and Jacobian at q_in
+  pinocchio::forwardKinematics(model_, *data_, q_in);
+  pinocchio::updateFramePlacement(model_, *data_, fid);
+
+  Eigen::MatrixXd J(6, model_.nv);
+  J.setZero();
+  pinocchio::computeFrameJacobian(
+    model_, *data_, q_in, fid,
+    pinocchio::LOCAL, J);  // Must match solveIK's frame for consistent null-space
+
+  // Damped pseudoinverse: J_pinv = J^T * (J * J^T + lambda^2 * I)^{-1}
+  Eigen::MatrixXd JJt = J * J.transpose();  // 6x6
+  JJt.diagonal().array() += damping * damping;
+  Eigen::MatrixXd J_pinv = J.transpose() * JJt.ldlt().solve(
+    Eigen::MatrixXd::Identity(6, 6));  // nv x 6
+
+  // Null-space projector: N = I - J_pinv * J   (nv x nv)
+  Eigen::MatrixXd N = Eigen::MatrixXd::Identity(model_.nv, model_.nv) - J_pinv * J;
+
+  // Project bias into null space and apply
+  Eigen::VectorXd dq_null = alpha * N * null_bias;
+
+  // Integrate
+  Eigen::VectorXd q_out = pinocchio::integrate(model_, q_in, dq_null);
+
+  // Clamp to joint limits
+  for (int i = 0; i < model_.nq; ++i) {
+    if (model_.lowerPositionLimit[i] < model_.upperPositionLimit[i]) {
+      q_out[i] = std::max(model_.lowerPositionLimit[i],
+                           std::min(q_out[i], model_.upperPositionLimit[i]));
+    }
+  }
+
+  return q_out;
 }
 
 }  // namespace eiriarm_dynamics

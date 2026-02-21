@@ -181,9 +181,30 @@ public:
     double dt = 1.0);
 
   /**
+   * @brief Apply null-space motion to a joint configuration without affecting EE pose.
+   *
+   * Computes the null-space projector N = I - J_pinv * J for the given frame,
+   * then applies q_out = q + alpha * N * bias.
+   *
+   * @param frame_id    Target EE frame index
+   * @param q_in        Current joint configuration
+   * @param null_bias   Desired joint-space velocity (only the null-space component is kept)
+   * @param alpha       Gain / step size
+   * @param damping     Damping for pseudoinverse computation
+   * @return            Updated joint configuration with null-space motion applied
+   */
+  Eigen::VectorXd applyNullSpaceMotion(
+    int frame_id,
+    const Eigen::VectorXd& q_in,
+    const Eigen::VectorXd& null_bias,
+    double alpha = 1.0,
+    double damping = 1e-3);
+
+  /**
    * @brief Get the Pinocchio model (const reference)
    */
   const pinocchio::Model& getModel() const { return model_; }
+  pinocchio::Data* getData() { return data_.get(); }
 
 private:
   pinocchio::Model model_;

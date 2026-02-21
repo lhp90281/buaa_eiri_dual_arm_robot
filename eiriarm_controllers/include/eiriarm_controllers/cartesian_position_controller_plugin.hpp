@@ -1,6 +1,7 @@
 #ifndef EIRIARM_CONTROLLERS__CARTESIAN_POSITION_CONTROLLER_PLUGIN_HPP_
 #define EIRIARM_CONTROLLERS__CARTESIAN_POSITION_CONTROLLER_PLUGIN_HPP_
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "realtime_tools/realtime_buffer.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "eiriarm_controllers/eiriarm_dynamics.hpp"
 
 namespace eiriarm_controllers
@@ -54,6 +56,7 @@ public:
 private:
   void leftTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
   void rightTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+  void homingCallback(const std_msgs::msg::String::SharedPtr msg);
 
   // Algorithm library
   std::unique_ptr<eiriarm_dynamics::EiriarmDynamics> dynamics_;
@@ -67,7 +70,6 @@ private:
   double ik_damping_ = 1e-3;
   double ik_dt_ = 1.0;
   double position_interpolation_speed_ = 1.0;  // rad/s max joint speed for smooth motion
-
   // Frame IDs
   int left_frame_id_ = -1;
   int right_frame_id_ = -1;
@@ -77,6 +79,7 @@ private:
   Eigen::VectorXd v_;           // current joint velocities (full model)
   Eigen::VectorXd q_desired_;   // desired joint positions from IK
   Eigen::VectorXd q_command_;   // smoothed command being sent
+  Eigen::VectorXd q_home_;      // home joint configuration (captured at startup)
 
   // Cached mapping: joint_names_[i] -> velocity index in full Pinocchio model
   std::vector<int> joint_idx_v_;
@@ -88,14 +91,20 @@ private:
   // Subscribers
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr left_target_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr right_target_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr homing_sub_;
 
   // Publishers
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr feedback_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr homing_status_pub_;
 
   // Flags
   bool left_target_received_ = false;
   bool right_target_received_ = false;
   bool initial_pose_captured_ = false;
+  std::string homing_request_arm_;     // set by callback: "left"/"right"/"both"
+  std::atomic<bool> homing_requested_{false};
+  bool homing_left_ = false;            // left arm currently homing
+  bool homing_right_ = false;           // right arm currently homing
 };
 
 }  // namespace eiriarm_controllers
