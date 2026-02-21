@@ -161,7 +161,7 @@ cartesian_position_controller:
     ik_dt: 1.0
 
     # Motion smoothing: max joint speed for interpolation (rad/s)
-    position_interpolation_speed: 2.0
+    position_interpolation_speed: 1.0
 
 # ============================================================================
 # Joint State Broadcaster Configuration

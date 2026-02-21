@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cartesian Keyboard Control for Dual Arm Robot
+Cartesian Keyboard Control for Dual Arm Robot (Global Keyboard via pynput)
 
 Position control:
   W/S : +/- X    A/D : +/- Y    Q/E : +/- Z
@@ -12,24 +12,24 @@ Arm selection:
   Tab : Cycle (Left -> Right -> Both)
 
 Other:
-  +/- : Step size    R : Reset pose    ESC/Ctrl+C : Exit
+  +/- : Step size    R : Joint homing    ESC : Exit
 
+Works from ANY window (global keyboard capture via pynput).
 Press and hold to move continuously, release to stop.
 """
 
 import sys
 import os
 import math
-import tty
-import termios
-import select
 import time
+import threading
 
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
+from pynput import keyboard as pynput_kb
 # Attempt to import pinocchio for FK (optional, for display)
 try:
     import pinocchio
@@ -80,6 +80,9 @@ class CartesianKeyboardController(Node):
         self.homing_active = False
         self.homing_arm = ''  # which arm is homing: 'left'/'right'/'both'
 
+        # Pressed keys set (for pynput)
+        self.pressed_keys = set()
+
         # Publishers
         self.left_pub = self.create_publisher(
             PoseStamped,
@@ -97,6 +100,13 @@ class CartesianKeyboardController(Node):
         self.homing_status_sub = self.create_subscription(
             String, '/cartesian_position_controller/homing_status',
             self.homing_status_callback, 10)
+        # Subscribe to homing FK poses (exact EE pose after homing)
+        self.left_homing_fk_sub = self.create_subscription(
+            PoseStamped, '/cartesian_position_controller/left_homing_fk',
+            self.left_homing_fk_callback, 10)
+        self.right_homing_fk_sub = self.create_subscription(
+            PoseStamped, '/cartesian_position_controller/right_homing_fk',
+            self.right_homing_fk_callback, 10)
 
         self.initial_joint_state_received = False
         self.joint_positions = {}
@@ -106,19 +116,31 @@ class CartesianKeyboardController(Node):
 
         self.running = True
 
-        self.get_logger().info('Cartesian Keyboard Controller started')
+        self.get_logger().info('Cartesian Keyboard Controller started (global keyboard via pynput)')
         self.get_logger().info(f'Step size: {self.step_size:.4f} m, Update rate: {self.update_rate} Hz')
+
+    def left_homing_fk_callback(self, msg):
+        """Receive exact FK pose from controller after left arm homing."""
+        p = msg.pose.position
+        o = msg.pose.orientation
+        self.left_pos = [p.x, p.y, p.z]
+        self.left_orient = [o.x, o.y, o.z, o.w]
+        self.get_logger().info(
+            f'Left arm FK updated: [{p.x:.4f}, {p.y:.4f}, {p.z:.4f}]')
+
+    def right_homing_fk_callback(self, msg):
+        """Receive exact FK pose from controller after right arm homing."""
+        p = msg.pose.position
+        o = msg.pose.orientation
+        self.right_pos = [p.x, p.y, p.z]
+        self.right_orient = [o.x, o.y, o.z, o.w]
+        self.get_logger().info(
+            f'Right arm FK updated: [{p.x:.4f}, {p.y:.4f}, {p.z:.4f}]')
 
     def homing_status_callback(self, msg):
         """Handle homing status from controller."""
         if msg.data == 'done':
-            # Homing complete - reset Cartesian targets for homed arm(s) to initial poses
-            if self.homing_arm in ('left', 'both') and self.left_init_pos:
-                self.left_pos = list(self.left_init_pos)
-                self.left_orient = list(self.left_init_orient)
-            if self.homing_arm in ('right', 'both') and self.right_init_pos:
-                self.right_pos = list(self.right_init_pos)
-                self.right_orient = list(self.right_init_orient)
+            # Homing complete - FK poses are updated via homing_fk callbacks
             self.homing_active = False
             self.homing_arm = ''
         else:
@@ -323,11 +345,6 @@ def get_initial_ee_poses(node):
 def print_status(node):
     """Print current status to terminal."""
     arm_str = {'left': 'LEFT', 'right': 'RIGHT', 'both': 'BOTH'}[node.active_arm]
-    # Show active arm's orientation as Euler hint
-    if node.active_arm == 'right':
-        o = node.right_orient
-    else:
-        o = node.left_orient
     homing_str = ' [HOMING]' if node.homing_active else ''
     sys.stdout.write(
         f'\r  [{arm_str}] pos:{node.step_size:.4f}m rot:{math.degrees(node.rot_step):.1f}deg  '
@@ -338,122 +355,101 @@ def print_status(node):
     sys.stdout.flush()
 
 
-def keyboard_loop(node):
-    """Main keyboard reading loop using raw terminal input."""
-    # Save terminal settings
-    old_settings = termios.tcgetattr(sys.stdin)
+# Key mapping: pynput key -> (attribute, value)
+# For character keys, use the char string
+CHAR_KEY_MAP = {
+    'w': ('move_x', 1),
+    's': ('move_x', -1),
+    'a': ('move_y', 1),
+    'd': ('move_y', -1),
+    'q': ('move_z', 1),
+    'e': ('move_z', -1),
+    '8': ('move_pitch', 1),
+    '2': ('move_pitch', -1),
+    '4': ('move_roll', -1),
+    '6': ('move_roll', 1),
+    '7': ('move_yaw', 1),
+    '9': ('move_yaw', -1),
+}
 
+
+def on_press(key, node):
+    """Handle key press (called from pynput listener thread)."""
+    try:
+        ch = key.char.lower() if hasattr(key, 'char') and key.char else None
+    except AttributeError:
+        ch = None
+
+    if ch and ch in CHAR_KEY_MAP:
+        attr, val = CHAR_KEY_MAP[ch]
+        setattr(node, attr, val)
+        node.pressed_keys.add(ch)
+    elif ch in ('+', '='):
+        node.step_size = min(node.step_size * 1.5, 0.05)
+        node.rot_step = min(node.rot_step * 1.5, 0.2)
+    elif ch in ('-', '_'):
+        node.step_size = max(node.step_size / 1.5, 0.0005)
+        node.rot_step = max(node.rot_step / 1.5, 0.002)
+    elif ch == 'r':
+        msg = String()
+        msg.data = node.active_arm
+        node.homing_pub.publish(msg)
+        node.move_x = 0
+        node.move_y = 0
+        node.move_z = 0
+        node.move_roll = 0
+        node.move_pitch = 0
+        node.move_yaw = 0
+        node.pressed_keys.clear()
+    elif key == pynput_kb.Key.tab:
+        cycle = {'left': 'right', 'right': 'both', 'both': 'left'}
+        node.active_arm = cycle[node.active_arm]
+    elif key == pynput_kb.Key.esc:
+        node.running = False
+        return False  # Stop pynput listener
+
+    print_status(node)
+
+
+def on_release(key, node):
+    """Handle key release (called from pynput listener thread)."""
+    try:
+        ch = key.char.lower() if hasattr(key, 'char') and key.char else None
+    except AttributeError:
+        ch = None
+
+    if ch and ch in CHAR_KEY_MAP:
+        node.pressed_keys.discard(ch)
+        attr, _ = CHAR_KEY_MAP[ch]
+        # Only zero out if no other key for same axis is pressed
+        still_pressed = any(k in node.pressed_keys and CHAR_KEY_MAP[k][0] == attr
+                            for k in CHAR_KEY_MAP)
+        if not still_pressed:
+            setattr(node, attr, 0)
+        print_status(node)
+
+
+def keyboard_loop(node):
+    """Main loop with pynput global keyboard listener."""
     print("\n" + "=" * 70)
-    print("  Cartesian Keyboard Control")
+    print("  Cartesian Keyboard Control (Global - works from any window)")
     print("=" * 70)
     print("  Position:  W/S: +/-X    A/D: +/-Y    Q/E: +/-Z")
     print("  Rotation:  8/2: +/-Pitch  4/6: +/-Roll  7/9: +/-Yaw  (numpad)")
     print("  Arm:       Tab: cycle (Left/Right/Both)")
-    print("  Other:     +/-: Step size    R: Joint homing (all joints to zero)    ESC: Exit")
+    print("  Other:     +/-: Step size    R: Joint homing    ESC: Exit")
     print("=" * 70)
 
+    listener = pynput_kb.Listener(
+        on_press=lambda key: on_press(key, node),
+        on_release=lambda key: on_release(key, node))
+    listener.start()
+
     try:
-        tty.setraw(sys.stdin.fileno())
-
-        # We need a non-blocking read with timeout to handle key release
-        # Since raw terminal doesn't give key-up events,
-        # we use a "tap to toggle" approach:
-        # - Single press moves one step
-        # - Hold detection via repeated reads
-
-        # Actually, for a better UX, let's use a different approach:
-        # Keys set movement direction, releasing is detected by no key input
-        last_key_time = 0.0
-        key_timeout = 0.15  # seconds - if no key repeat within this, stop
-
         while node.running:
-            # Check if there's input available
-            rlist, _, _ = select.select([sys.stdin], [], [], 0.02)
-
-            if rlist:
-                ch = sys.stdin.read(1)
-                last_key_time = time.time()
-
-                # ESC
-                if ch == '\x1b':
-                    node.running = False
-                    break
-                # Ctrl+C
-                elif ch == '\x03':
-                    node.running = False
-                    break
-
-                ch_lower = ch.lower()
-
-                # --- Position keys ---
-                if ch_lower == 'w':
-                    node.move_x = 1
-                elif ch_lower == 's':
-                    node.move_x = -1
-                elif ch_lower == 'a':
-                    node.move_y = 1
-                elif ch_lower == 'd':
-                    node.move_y = -1
-                elif ch_lower == 'q':
-                    node.move_z = 1
-                elif ch_lower == 'e':
-                    node.move_z = -1
-                # --- Rotation keys (numpad digits) ---
-                elif ch == '8':
-                    node.move_pitch = 1
-                elif ch == '2':
-                    node.move_pitch = -1
-                elif ch == '4':
-                    node.move_roll = -1
-                elif ch == '6':
-                    node.move_roll = 1
-                elif ch == '7':
-                    node.move_yaw = 1
-                elif ch == '9':
-                    node.move_yaw = -1
-                # --- Arm selection (Tab to cycle) ---
-                elif ch == '\t':
-                    cycle = {'left': 'right', 'right': 'both', 'both': 'left'}
-                    node.active_arm = cycle[node.active_arm]
-                # --- Step size ---
-                elif ch in ('+', '='):
-                    node.step_size = min(node.step_size * 1.5, 0.05)
-                    node.rot_step = min(node.rot_step * 1.5, 0.2)
-                elif ch in ('-', '_'):
-                    node.step_size = max(node.step_size / 1.5, 0.0005)
-                    node.rot_step = max(node.rot_step / 1.5, 0.002)
-                elif ch_lower == 'r':
-                    # Joint-level homing: command active arm joints to zero
-                    msg = String()
-                    msg.data = node.active_arm
-                    node.homing_pub.publish(msg)
-                    node.move_x = 0
-                    node.move_y = 0
-                    node.move_z = 0
-                    node.move_roll = 0
-                    node.move_pitch = 0
-                    node.move_yaw = 0
-                print_status(node)
-            else:
-                # No key pressed - check if we should stop movement
-                if time.time() - last_key_time > key_timeout:
-                    has_motion = (node.move_x != 0 or node.move_y != 0 or node.move_z != 0
-                                  or node.move_roll != 0 or node.move_pitch != 0 or node.move_yaw != 0)
-                    if has_motion:
-                        node.move_x = 0
-                        node.move_y = 0
-                        node.move_z = 0
-                        node.move_roll = 0
-                        node.move_pitch = 0
-                        node.move_yaw = 0
-                        print_status(node)
-
-            # Spin ROS
-            rclpy.spin_once(node, timeout_sec=0)
-
+            rclpy.spin_once(node, timeout_sec=0.02)
     finally:
-        # Restore terminal settings
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        listener.stop()
         print("\n\nExiting keyboard control.")
 
 
@@ -471,7 +467,7 @@ def main():
         if node.right_initialized:
             node._publish_pose(node.right_pub, node.right_pos, node.right_orient)
 
-        # Start keyboard control
+        # Start keyboard control (global via pynput)
         keyboard_loop(node)
     except KeyboardInterrupt:
         pass

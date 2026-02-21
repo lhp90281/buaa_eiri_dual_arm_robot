@@ -96,6 +96,8 @@ private:
   // Publishers
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr feedback_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr homing_status_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr left_homing_fk_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr right_homing_fk_pub_;
 
   // Flags
   bool left_target_received_ = false;
@@ -105,6 +107,7 @@ private:
   std::atomic<bool> homing_requested_{false};
   bool homing_left_ = false;            // left arm currently homing
   bool homing_right_ = false;           // right arm currently homing
+
 };
 
 }  // namespace eiriarm_controllers

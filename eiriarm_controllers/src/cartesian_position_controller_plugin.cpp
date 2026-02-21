@@ -180,6 +180,10 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
     "~/joint_position_feedback", 10);
   homing_status_pub_ = get_node()->create_publisher<std_msgs::msg::String>(
     "~/homing_status", 10);
+  left_homing_fk_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/left_homing_fk", 10);
+  right_homing_fk_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/right_homing_fk", 10);
 
   // Initialize realtime buffers
   auto empty_msg = std::make_shared<geometry_msgs::msg::PoseStamped>();
@@ -340,7 +344,27 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
     if (at_home) {
       homing_left_ = false;
-      RCLCPP_INFO(get_node()->get_logger(), "Left arm homing complete");
+      // Compute FK at home config and publish exact EE pose
+      dynamics_->updateState(q_desired_, v_ * 0.0);
+      try {
+        pinocchio::SE3 fk_pose = dynamics_->computeFK(left_frame_id_);
+        auto fk_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
+        fk_msg->header.stamp = get_node()->now();
+        fk_msg->header.frame_id = "world";
+        fk_msg->pose.position.x = fk_pose.translation()[0];
+        fk_msg->pose.position.y = fk_pose.translation()[1];
+        fk_msg->pose.position.z = fk_pose.translation()[2];
+        Eigen::Quaterniond fk_quat(fk_pose.rotation());
+        fk_msg->pose.orientation.x = fk_quat.x();
+        fk_msg->pose.orientation.y = fk_quat.y();
+        fk_msg->pose.orientation.z = fk_quat.z();
+        fk_msg->pose.orientation.w = fk_quat.w();
+        left_homing_fk_pub_->publish(std::move(fk_msg));
+        RCLCPP_INFO(get_node()->get_logger(), "Left arm homing complete. FK: [%.4f, %.4f, %.4f]",
+                    fk_pose.translation()[0], fk_pose.translation()[1], fk_pose.translation()[2]);
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(get_node()->get_logger(), "FK failed after left homing: %s", e.what());
+      }
       if (!homing_right_) {
         auto status_msg = std::make_unique<std_msgs::msg::String>();
         status_msg->data = "done";
@@ -361,7 +385,27 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
     if (at_home) {
       homing_right_ = false;
-      RCLCPP_INFO(get_node()->get_logger(), "Right arm homing complete");
+      // Compute FK at home config and publish exact EE pose
+      dynamics_->updateState(q_desired_, v_ * 0.0);
+      try {
+        pinocchio::SE3 fk_pose = dynamics_->computeFK(right_frame_id_);
+        auto fk_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
+        fk_msg->header.stamp = get_node()->now();
+        fk_msg->header.frame_id = "world";
+        fk_msg->pose.position.x = fk_pose.translation()[0];
+        fk_msg->pose.position.y = fk_pose.translation()[1];
+        fk_msg->pose.position.z = fk_pose.translation()[2];
+        Eigen::Quaterniond fk_quat(fk_pose.rotation());
+        fk_msg->pose.orientation.x = fk_quat.x();
+        fk_msg->pose.orientation.y = fk_quat.y();
+        fk_msg->pose.orientation.z = fk_quat.z();
+        fk_msg->pose.orientation.w = fk_quat.w();
+        right_homing_fk_pub_->publish(std::move(fk_msg));
+        RCLCPP_INFO(get_node()->get_logger(), "Right arm homing complete. FK: [%.4f, %.4f, %.4f]",
+                    fk_pose.translation()[0], fk_pose.translation()[1], fk_pose.translation()[2]);
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(get_node()->get_logger(), "FK failed after right homing: %s", e.what());
+      }
       if (!homing_left_) {
         auto status_msg = std::make_unique<std_msgs::msg::String>();
         status_msg->data = "done";
@@ -386,6 +430,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     } else {
       quat.normalize();
     }
+
     pinocchio::SE3 target_pose(quat.toRotationMatrix(), trans);
     
     Eigen::VectorXd q_ik_result;
@@ -423,6 +468,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     } else {
       quat.normalize();
     }
+
     pinocchio::SE3 target_pose(quat.toRotationMatrix(), trans);
     
     Eigen::VectorXd q_ik_result;
