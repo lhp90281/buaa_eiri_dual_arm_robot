@@ -17,6 +17,9 @@ find_package(pluginlib REQUIRED)
 find_package(realtime_tools REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(usb2can REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 include_directories(include)
 
@@ -62,6 +65,7 @@ target_include_directories(gravity_compensation_controller PUBLIC
 target_link_libraries(gravity_compensation_controller 
   eiriarm_dynamics
   pinocchio::pinocchio
+  yaml-cpp
 )
 
 ament_target_dependencies(gravity_compensation_controller
@@ -96,6 +100,26 @@ ament_target_dependencies(joint_impedance_controller_plugin
   pluginlib
   realtime_tools
   sensor_msgs
+)
+
+# Joint Position Controller Plugin (DM MIT-mode joint-space PD via motor)
+add_library(joint_position_controller SHARED
+  src/joint_position_controller.cpp
+)
+
+target_include_directories(joint_position_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(joint_position_controller
+  rclcpp
+  rclcpp_lifecycle
+  controller_interface
+  hardware_interface
+  pluginlib
+  realtime_tools
+  trajectory_msgs
 )
 
 # Cartesian Position Controller Plugin
@@ -142,17 +166,42 @@ ament_target_dependencies(topic_based_hardware_interface
   sensor_msgs
 )
 
+# DM Hardware Interface (direct usb2can <-> ros2_control)
+add_library(dm_hardware_interface SHARED
+  src/dm_hardware_interface.cpp
+)
+
+target_include_directories(dm_hardware_interface PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(dm_hardware_interface
+  yaml-cpp
+)
+
+ament_target_dependencies(dm_hardware_interface
+  rclcpp
+  rclcpp_lifecycle
+  hardware_interface
+  pluginlib
+  usb2can
+)
+
 # Export controller plugins
 pluginlib_export_plugin_description_file(controller_interface eiriarm_controllers.xml)
 
-# Export hardware interface plugin
+# Export hardware interface plugins
 pluginlib_export_plugin_description_file(hardware_interface eiriarm_hardware_interface.xml)
+pluginlib_export_plugin_description_file(hardware_interface dm_hardware_interface.xml)
 
 install(TARGETS 
   gravity_compensation_controller
   joint_impedance_controller_plugin
+  joint_position_controller
   cartesian_position_controller_plugin
   topic_based_hardware_interface
+  dm_hardware_interface
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -165,10 +214,14 @@ add_executable(gripper_controller_node
   src/gripper_controller_node.cpp
 )
 
+target_link_libraries(gripper_controller_node
+  yaml-cpp
+)
+
 ament_target_dependencies(gripper_controller_node
   rclcpp
-  sensor_msgs
   std_msgs
+  usb2can
 )
 
 install(TARGETS gripper_controller_node
@@ -188,6 +241,41 @@ install(PROGRAMS scripts/cartesian_keyboard_control.py
   RENAME cartesian_keyboard_control
 )
 
+install(PROGRAMS scripts/friction_identification.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME friction_identification
+)
+
+install(PROGRAMS scripts/friction_compensation_demo.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME friction_compensation_demo
+)
+
+install(PROGRAMS scripts/joint_zero_calibration.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME joint_zero_calibration
+)
+
+install(PROGRAMS scripts/joint_state_translator.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME joint_state_translator
+)
+
+install(PROGRAMS scripts/zero_at_current_pose.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME zero_at_current_pose
+)
+
+install(PROGRAMS scripts/teach_replay.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME teach_replay
+)
+
+install(PROGRAMS scripts/go_home.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME go_home
+)
+
 # ============================================================================
 # 4. Install headers and other files
 # ============================================================================
@@ -199,9 +287,14 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
 install(FILES 
   eiriarm_controllers.xml
   eiriarm_hardware_interface.xml
+  dm_hardware_interface.xml
   DESTINATION share/${PROJECT_NAME}
 )
 

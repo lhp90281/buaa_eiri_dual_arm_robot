@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "controller_interface/helpers.hpp"
+#include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include <Eigen/Geometry>
 
 namespace eiriarm_controllers
@@ -18,30 +19,43 @@ CartesianPositionControllerPlugin::CartesianPositionControllerPlugin()
 {
 }
 
-controller_interface::InterfaceConfiguration 
+controller_interface::InterfaceConfiguration
 CartesianPositionControllerPlugin::command_interface_configuration() const
 {
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
-  // Use effort command interfaces as data conduit to MuJoCo d->ctrl
-  // MuJoCo position actuators interpret d->ctrl as desired position
+  // MIT-mode command tuple per joint, MUST match kCmdStride in the header:
+  //   kCmdStride*i + 0: position    (q_des from IK + smoothing)
+  //   kCmdStride*i + 1: velocity    (v_ff = d/dt of smoothed q_command)
+  //   kCmdStride*i + 2: stiffness   (motor kp from yaml)
+  //   kCmdStride*i + 3: damping     (motor kd from yaml)
+  // The DM motor's MIT loop computes:
+  //   tau_motor = kp*(pos - q_meas) + kd*(vel - v_meas) + tau_ff
+  // where tau_ff comes from gravity_compensation_controller via the
+  // separate effort interface.
   for (const auto & joint_name : joint_names_) {
-    config.names.push_back(joint_name + "/effort");
+    config.names.push_back(joint_name + "/" + hardware_interface::HW_IF_POSITION);
+    config.names.push_back(joint_name + "/" + hardware_interface::HW_IF_VELOCITY);
+    config.names.push_back(joint_name + "/stiffness");
+    config.names.push_back(joint_name + "/damping");
   }
 
   return config;
 }
 
-controller_interface::InterfaceConfiguration 
+controller_interface::InterfaceConfiguration
 CartesianPositionControllerPlugin::state_interface_configuration() const
 {
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
+  // State stride MUST match kStateStride in the header:
+  //   kStateStride*i + 0: measured position
+  //   kStateStride*i + 1: measured velocity
   for (const auto & joint_name : joint_names_) {
-    config.names.push_back(joint_name + "/position");
-    config.names.push_back(joint_name + "/velocity");
+    config.names.push_back(joint_name + "/" + hardware_interface::HW_IF_POSITION);
+    config.names.push_back(joint_name + "/" + hardware_interface::HW_IF_VELOCITY);
   }
 
   return config;
@@ -51,6 +65,11 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_init(
 {
   try {
     auto_declare<std::vector<std::string>>("joints", std::vector<std::string>());
+    // Per-joint motor PD gains. Length MUST equal len(joints), in the
+    // same order; declared with empty defaults so on_configure() can
+    // catch missing yaml entries explicitly.
+    auto_declare<std::vector<double>>("kp_gains", std::vector<double>());
+    auto_declare<std::vector<double>>("kd_gains", std::vector<double>());
     auto_declare<std::string>("left_ee_frame", "left_link_7");
     auto_declare<std::string>("right_ee_frame", "right_link_7");
     auto_declare<int>("ik_max_iter", 100);
@@ -58,7 +77,7 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_init(
     auto_declare<double>("ik_damping", 1e-3);
     auto_declare<double>("ik_dt", 1.0);
     auto_declare<double>("position_interpolation_speed", 2.0);
-    
+
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception during on_init: %s", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -72,6 +91,8 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
 {
   // Get parameters
   joint_names_ = get_node()->get_parameter("joints").as_string_array();
+  kp_gains_   = get_node()->get_parameter("kp_gains").as_double_array();
+  kd_gains_   = get_node()->get_parameter("kd_gains").as_double_array();
   left_ee_frame_ = get_node()->get_parameter("left_ee_frame").as_string();
   right_ee_frame_ = get_node()->get_parameter("right_ee_frame").as_string();
   ik_max_iter_ = get_node()->get_parameter("ik_max_iter").as_int();
@@ -85,7 +106,26 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
     return controller_interface::CallbackReturn::ERROR;
   }
 
-  RCLCPP_INFO(get_node()->get_logger(), 
+  if (kp_gains_.size() != joint_names_.size() ||
+      kd_gains_.size() != joint_names_.size())
+  {
+    RCLCPP_ERROR(get_node()->get_logger(),
+                 "kp_gains (%zu) and kd_gains (%zu) must both have size == joints (%zu); "
+                 "fill in dual_arm_controllers.yaml -> cartesian_position_controller.",
+                 kp_gains_.size(), kd_gains_.size(), joint_names_.size());
+    return controller_interface::CallbackReturn::ERROR;
+  }
+  // Reject negatives -- DM expects non-negative kp/kd.
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    if (kp_gains_[i] < 0.0 || kd_gains_[i] < 0.0) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "Joint '%s': negative gain (kp=%.3f, kd=%.3f) is not allowed",
+                   joint_names_[i].c_str(), kp_gains_[i], kd_gains_[i]);
+      return controller_interface::CallbackReturn::ERROR;
+    }
+  }
+
+  RCLCPP_INFO(get_node()->get_logger(),
               "Configuring CartesianPositionController with %zu joints", joint_names_.size());
 
   // Get URDF from robot_description parameter
@@ -150,8 +190,10 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
       RCLCPP_ERROR(get_node()->get_logger(),
                    "Joint '%s' not found in Pinocchio model!", joint_names_[i].c_str());
     } else {
-      RCLCPP_INFO(get_node()->get_logger(), 
-                  "Joint %s: idx_v=%d", joint_names_[i].c_str(), joint_idx_v_[i]);
+      RCLCPP_INFO(get_node()->get_logger(),
+                  "  %-15s  idx_v=%2d  kp=%6.2f  kd=%6.3f",
+                  joint_names_[i].c_str(), joint_idx_v_[i],
+                  kp_gains_[i], kd_gains_[i]);
     }
   }
 
@@ -184,6 +226,16 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
     "~/left_homing_fk", 10);
   right_homing_fk_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/right_homing_fk", 10);
+  // Live EE pose. We publish every tick (gated on subscription count so
+  // it is free while no one listens). Uses BestEffort QoS with a small
+  // history -- consumers like rqt_plot only need the latest sample, and
+  // we never want to back-pressure the RT update().
+  rclcpp::QoS state_qos(rclcpp::KeepLast(1));
+  state_qos.best_effort();
+  left_cartesian_state_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/left_cartesian_state", state_qos);
+  right_cartesian_state_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/right_cartesian_state", state_qos);
 
   // Initialize realtime buffers
   auto empty_msg = std::make_shared<geometry_msgs::msg::PoseStamped>();
@@ -196,17 +248,18 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_confi
 controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_activate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  if (state_interfaces_.size() != joint_names_.size() * 2) {
+  const size_t n = joint_names_.size();
+  if (state_interfaces_.size() != n * kStateStride) {
     RCLCPP_ERROR(get_node()->get_logger(),
                  "Expected %zu state interfaces, got %zu",
-                 joint_names_.size() * 2, state_interfaces_.size());
+                 n * kStateStride, state_interfaces_.size());
     return controller_interface::CallbackReturn::ERROR;
   }
 
-  if (command_interfaces_.size() != joint_names_.size()) {
+  if (command_interfaces_.size() != n * kCmdStride) {
     RCLCPP_ERROR(get_node()->get_logger(),
                  "Expected %zu command interfaces, got %zu",
-                 joint_names_.size(), command_interfaces_.size());
+                 n * kCmdStride, command_interfaces_.size());
     return controller_interface::CallbackReturn::ERROR;
   }
 
@@ -218,15 +271,43 @@ controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_activ
   homing_left_ = false;
   homing_right_ = false;
 
-  RCLCPP_INFO(get_node()->get_logger(), 
-              "CartesianPositionController activated. Waiting to capture initial pose...");
+  // Bumpless start: pre-write a "hold here" command tuple before update()
+  // runs. We seed cmd_pos with the measured joint position, kp/kd at the
+  // yaml values, and cmd_vel = 0. The motor's MIT-mode loop then reads
+  //   tau = kp*(q_meas - q_meas) + kd*(0 - v_meas) + tau_ff_gravity
+  //       = -kd*v_meas (small) + tau_ff_gravity
+  // i.e. zero correction torque on top of whatever the gravity controller
+  // is already applying, so there is no kp-step-induced jolt at handoff.
+  for (size_t i = 0; i < n; ++i) {
+    const double q = state_interfaces_[i * kStateStride + 0].get_value();
+    command_interfaces_[i * kCmdStride + 0].set_value(q);              // position
+    command_interfaces_[i * kCmdStride + 1].set_value(0.0);            // velocity
+    command_interfaces_[i * kCmdStride + 2].set_value(kp_gains_[i]);   // stiffness (kp)
+    command_interfaces_[i * kCmdStride + 3].set_value(kd_gains_[i]);   // damping   (kd)
+  }
+
+  RCLCPP_INFO(get_node()->get_logger(),
+              "CartesianPositionController activated; holding current pose. "
+              "Waiting for ~/left_target_pose / ~/right_target_pose.");
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn CartesianPositionControllerPlugin::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  // Hold current position on deactivate (don't zero - that would cause jump)
+  // Graceful handoff: zero kp/kd and cmd_vel, set cmd_pos to current measured
+  // position. With kp == kd == 0 the dm_hardware_interface's bumpless mirror
+  // takes over and tracks live motor position, so even if no other controller
+  // immediately claims these interfaces the motor cannot snap to a stale
+  // setpoint. Same pattern as JointPositionController::on_deactivate.
+  const size_t n = joint_names_.size();
+  for (size_t i = 0; i < n; ++i) {
+    const double q = state_interfaces_[i * kStateStride + 0].get_value();
+    command_interfaces_[i * kCmdStride + 0].set_value(q);     // position
+    command_interfaces_[i * kCmdStride + 1].set_value(0.0);   // velocity
+    command_interfaces_[i * kCmdStride + 2].set_value(0.0);   // stiffness (kp)
+    command_interfaces_[i * kCmdStride + 3].set_value(0.0);   // damping   (kd)
+  }
   RCLCPP_INFO(get_node()->get_logger(), "CartesianPositionController deactivated");
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -260,12 +341,13 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
   double dt = period.seconds();
   if (dt <= 0.0) dt = 0.002;  // fallback
 
-  // Read joint states from state_interfaces and map to full state vector
+  // Read joint states from state_interfaces and map to full state vector.
+  // Layout MUST match kStateStride in the header.
   for (size_t i = 0; i < joint_names_.size(); ++i) {
-    double q_current = state_interfaces_[2 * i].get_value();      // position
-    double v_current = state_interfaces_[2 * i + 1].get_value();  // velocity
-    
-    int idx_v = joint_idx_v_[i];
+    const double q_current = state_interfaces_[i * kStateStride + 0].get_value();
+    const double v_current = state_interfaces_[i * kStateStride + 1].get_value();
+
+    const int idx_v = joint_idx_v_[i];
     if (idx_v >= 0 && idx_v < q_.size()) {
       q_[idx_v] = q_current;
       v_[idx_v] = v_current;
@@ -492,25 +574,76 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
   }
 
-  // Smooth interpolation: move q_command_ towards q_desired_ at limited speed
-  double max_step = position_interpolation_speed_ * dt;
+  // Smooth interpolation: move q_command_ towards q_desired_ at limited
+  // speed, then forward (pos, v_ff, kp, kd) to the MIT-mode interfaces.
+  // v_ff is the per-tick step / dt -- it equals the saturated speed cap
+  // while the joint is far from target and decays linearly to zero as
+  // q_command_ approaches q_desired_, so the motor's kd term does not
+  // brake against the legitimate motion.
+  const double max_step = position_interpolation_speed_ * dt;
   for (size_t i = 0; i < joint_names_.size(); ++i) {
-    int idx_v = joint_idx_v_[i];
+    const int idx_v = joint_idx_v_[i];
+
+    double pos_cmd = 0.0;
+    double vel_ff  = 0.0;
     if (idx_v >= 0 && idx_v < q_command_.size()) {
-      double error = q_desired_[idx_v] - q_command_[idx_v];
-      double step = std::max(-max_step, std::min(error, max_step));
+      const double error = q_desired_[idx_v] - q_command_[idx_v];
+      const double step  = std::max(-max_step, std::min(error, max_step));
       q_command_[idx_v] += step;
+      pos_cmd = q_command_[idx_v];
+      vel_ff  = step / dt;
+    } else {
+      // Joint not in pinocchio model: hold at measurement, no PD.
+      pos_cmd = state_interfaces_[i * kStateStride + 0].get_value();
+      vel_ff  = 0.0;
     }
+
+    command_interfaces_[i * kCmdStride + 0].set_value(pos_cmd);          // position
+    command_interfaces_[i * kCmdStride + 1].set_value(vel_ff);           // velocity (FF)
+    command_interfaces_[i * kCmdStride + 2].set_value(kp_gains_[i]);     // stiffness (kp)
+    command_interfaces_[i * kCmdStride + 3].set_value(kd_gains_[i]);     // damping   (kd)
   }
 
-  // Write joint position commands to effort command interfaces
-  // (effort interface is used as data conduit; MuJoCo position actuators interpret d->ctrl as position)
-  for (size_t i = 0; i < joint_names_.size(); ++i) {
-    int idx_v = joint_idx_v_[i];
-    if (idx_v >= 0 && idx_v < q_command_.size()) {
-      command_interfaces_[i].set_value(q_command_[idx_v]);
-    } else {
-      command_interfaces_[i].set_value(0.0);
+  // ---- Live EE pose publishers (one PoseStamped per arm, every tick).
+  // solveIK above leaves dynamics_->q_current_ at the last IK iterate;
+  // we need FK at the actual measurement here, so restore the state to
+  // (q_, v_) before calling computeFK. Subscription-count gate keeps the
+  // RT cost at a single int compare while no one is listening.
+  const bool want_left_state =
+    left_cartesian_state_pub_ && left_cartesian_state_pub_->get_subscription_count() > 0;
+  const bool want_right_state =
+    right_cartesian_state_pub_ && right_cartesian_state_pub_->get_subscription_count() > 0;
+  if (want_left_state || want_right_state) {
+    dynamics_->updateState(q_, v_);
+    const auto stamp = get_node()->now();
+    auto fill = [&stamp](geometry_msgs::msg::PoseStamped & m,
+                         const pinocchio::SE3 & X)
+    {
+      m.header.stamp = stamp;
+      m.header.frame_id = "base_footprint";  // URDF root in dual_arm_robot_plug.urdf
+      m.pose.position.x = X.translation()[0];
+      m.pose.position.y = X.translation()[1];
+      m.pose.position.z = X.translation()[2];
+      const Eigen::Quaterniond qX(X.rotation());
+      m.pose.orientation.w = qX.w();
+      m.pose.orientation.x = qX.x();
+      m.pose.orientation.y = qX.y();
+      m.pose.orientation.z = qX.z();
+    };
+    try {
+      if (want_left_state) {
+        geometry_msgs::msg::PoseStamped m;
+        fill(m, dynamics_->computeFK(left_frame_id_));
+        left_cartesian_state_pub_->publish(m);
+      }
+      if (want_right_state) {
+        geometry_msgs::msg::PoseStamped m;
+        fill(m, dynamics_->computeFK(right_frame_id_));
+        right_cartesian_state_pub_->publish(m);
+      }
+    } catch (const std::exception & e) {
+      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(),
+        2000, "FK for cartesian_state publish failed: %s", e.what());
     }
   }
 

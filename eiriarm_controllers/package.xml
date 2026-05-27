@@ -23,9 +23,22 @@
   
   <!-- Geometry messages for Cartesian control -->
   <depend>geometry_msgs</depend>
+
+  <!-- Trajectory messages for joint_position_controller -->
+  <depend>trajectory_msgs</depend>
   
   <!-- Dynamics computation -->
   <depend>pinocchio</depend>
+
+  <!-- DM hardware interface dependencies -->
+  <depend>usb2can</depend>
+  <depend>yaml-cpp</depend>
+
+  <!-- Python scripts (friction_identification.py) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
@@ -34,5 +47,6 @@
     <build_type>ament_cmake</build_type>
     <controller_interface plugin="${prefix}/eiriarm_controllers.xml"/>
     <hardware_interface plugin="${prefix}/eiriarm_hardware_interface.xml"/>
+    <hardware_interface plugin="${prefix}/dm_hardware_interface.xml"/>
   </export>
 </package>

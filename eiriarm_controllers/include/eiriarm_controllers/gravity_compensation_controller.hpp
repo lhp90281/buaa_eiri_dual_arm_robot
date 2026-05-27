@@ -73,6 +73,21 @@ private:
     double effort_limit;
   };
 
+  // Per-joint friction model (parameters of one motor type, copied per joint
+  // so we do not pay a map lookup inside the realtime update loop).
+  struct JointFriction {
+    bool valid{false};
+    double viscous{0.0};
+    double coulomb_pos{0.0};
+    double coulomb_neg{0.0};
+  };
+
+  /// Load friction_model.yaml and populate joint_frictions_ aligned with
+  /// joint_names_ using motor_types. Returns false on any unrecoverable
+  /// error (missing file, missing key for an enabled joint).
+  bool load_friction_model(const std::string & yaml_path,
+                           const std::vector<std::string> & motor_types);
+
   // Algorithm library
   std::unique_ptr<eiriarm_dynamics::EiriarmDynamics> dynamics_;
 
@@ -81,6 +96,26 @@ private:
   std::map<std::string, JointGains> joint_gains_;
   double max_effort_ = 50.0;
   double velocity_filter_alpha_ = 0.99;
+
+  // Per-joint multiplicative scale on the gravity term. Stored in the same
+  // order as joint_names_ for O(1) indexing in update(). Default = 1.0
+  // (no change). >1.0 to compensate more (e.g. URDF mass under-estimated),
+  // <1.0 to compensate less. Loaded from the 'gravity_gains' parameter.
+  std::vector<double> gravity_gains_;
+
+  // idx_v cache aligned with joint_names_ to avoid scanning the Pinocchio
+  // model on every update() iteration.
+  std::vector<int> joint_idx_v_;
+
+  // Friction compensation (optional, off by default)
+  bool friction_enabled_ = false;
+  // Per-joint friction compensation gain. Loaded from the 'friction_gains'
+  // array parameter; falls back to the scalar 'friction_gain' (broadcast to
+  // every joint) when the array is unset / empty. Same indexing as
+  // joint_names_.
+  std::vector<double> friction_gains_;
+  double friction_deadband_ = 0.05;
+  std::vector<JointFriction> joint_frictions_;  // size == joint_names_.size()
 
   // State storage
   Eigen::VectorXd q_;

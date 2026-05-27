@@ -765,4 +765,94 @@
     <mimic joint="right_gripper_right_finger_joint" multiplier="1" offset="0"/>
   </joint>
   
+  <!-- ============================================================================ -->
+  <!-- ros2_control Configuration with Topic-based Hardware Interface              -->
+  <!-- ============================================================================ -->
+  <ros2_control name="DualArmTopicBridge" type="system">
+    <hardware>
+      <!-- Use Topic-based Hardware Interface (bridges /joint_states and /ctrl/effort) -->
+      <plugin>eiriarm_controllers/TopicBasedHardwareInterface</plugin>
+      
+      <!-- Topic names (optional, these are the defaults) -->
+      <param name="joint_state_topic">/joint_states</param>
+      <param name="effort_command_topic">/ctrl/effort</param>
+    </hardware>
+    
+    <!-- Left arm joints (7 DoF) -->
+    <joint name="left_joint_0">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_1">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_2">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_3">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_4">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_5">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="left_joint_6">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    
+    <!-- Right arm joints (7 DoF) -->
+    <joint name="right_joint_0">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_1">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_2">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_3">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_4">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_5">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint_6">
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    
+    <!-- Note: Gripper joints are excluded from ros2_control for now -->
+    <!-- They can be added later if needed -->
+  </ros2_control>
 </robot>

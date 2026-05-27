@@ -1,277 +1,193 @@
-# EiriArm Bringup Package
+# EiriArm Bringup
 
-快速启动 EiriArm 双臂机器人仿真和控制系统。
-
-## 📦 功能
-
-- **MuJoCo 仿真**：启动 MuJoCo 物理仿真器
-- **多种控制器**：支持阻抗控制、重力补偿
-- **一键启动**：完整系统或分离启动
+EiriArm 双臂机器人的统一启动入口。同时承载 **真机** 和 **MuJoCo 仿真** 两套 launch；本文档以真机为主。
 
 ---
 
-## 🚀 快速开始
+## 真机：两个终端
 
-### 方式1：完整系统启动（推荐）
-
-一键启动 MuJoCo 仿真 + 控制器：
+真机启动**刻意**拆成两条 launch、两个终端。原因是 `usb2can_node` / `dm_motor_bridge`
+会以 300 Hz 持续打印串口与 CAN 帧统计，把控制器自己的日志（ENABLE 进度、夹爪
+校准、shutdown DISABLE 重试……）淹没掉，调试时几乎无法读。分开跑后两边日志互不
+干扰。
 
 ```bash
-# 阻抗控制器（默认）
-ros2 launch eiriarm_bringup system.launch.py
+# 终端 1 —— USB-CAN 桥（先启动，让电机进入 ready 状态）
+ros2 launch eiriarm_bringup bridge.launch.py
 
-# 重力补偿控制器
-ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
+# 终端 2 —— 控制端（ros2_control + 控制器 + 夹爪）
+ros2 launch eiriarm_bringup real_robot.launch.py
 ```
 
-### 方式2：分离启动
+顺序：先 `bridge.launch.py`（确认 `/motor/chN/state` 有数据），再
+`real_robot.launch.py`。控制端会自动等到夹爪所在通道的所有 7 个臂关节都
+ENABLED 之后才发夹爪命令，避免 CAN 总线在使能阶段相互踩踏。
 
-分别启动仿真和控制器（用于调试）：
+### 终端 1：`bridge.launch.py`
+
+会启动：
+
+1. `usb2can_node` —— USB-CAN 串口驱动（`/dcu/command`、`/dcu/feedback`、`/imu/data`）
+2. `dm_motor_bridge` —— DM MIT 协议聚合桥；把多个 `/motor/chN/cmd` 发布者聚合到
+   单一 timer-driven 的 `/dcu/command`（默认 300 Hz），不会随发布者数量叠加。
+
+参数：
+
+| 参数 | 取值 | 默认 | 说明 |
+|---|---|---|---|
+| `device` | path | `/dev/ttyACM0` | USB-CAN 板的串口 |
+| `motors_config` | path | `<usb2can>/config/dm_motors_eiriarm.yaml` | DM 电机限幅 YAML |
+
+### 终端 2：`real_robot.launch.py`
+
+会按顺序启动：
+
+1. `robot_state_publisher` —— 由 xacro 生成 URDF
+2. `controller_manager` (`ros2_control_node`) —— 加载 `DMHardwareInterface`
+3. `joint_state_broadcaster`（始终 active）
+4. `gravity_compensation_controller`（始终 active）
+5. 顶层控制器（看 `controller:=` 参数；可选）
+6. `gripper_controller_node`（看 `gripper:=` 参数；可选；自动校准）
+
+**默认就处于"重力补偿 + 双夹爪自动校准"的示教模式**，不需要再 `ros2 control switch_controllers`。
+
+参数：
+
+| 参数 | 取值 | 默认 | 说明 |
+|---|---|---|---|
+| `arms` | `left`/`right`/`dual` | `dual` | 暴露给 ros2_control 的手臂 |
+| `controller` | `gravity`/`joint_position`/`cartesian_position` | `gravity` | 顶层控制器（与 gravity 共存）|
+| `gripper` | `true`/`false` | `true` | 是否启动 gripper_controller_node |
+| `offsets_yaml` | path | `/home/arm/ros2_ws/joint_offsets_dual.yaml` | 14 关节零位/方向标定 YAML |
+
+### `controller:=` 的详细含义
+
+| 值 | 激活的控制器组合 | 用途 |
+|---|---|---|
+| `gravity` | gravity_compensation_controller | 纯重力补偿，自由示教 |
+| `joint_position` | gravity + joint_position_controller | 关节空间 PD 跟踪 |
+| `cartesian_position` | gravity + cartesian_position_controller | 笛卡尔 PD 协调（**仅 dual**）|
+
+`gravity_compensation_controller` 在三种模式下都 active —— 它独占 effort 接口，PD 类控制器独占 pos/vel/stiff/damp 接口，二者并行求和送到电机。
+
+---
+
+## 常用启动示例
 
 ```bash
-# 终端1：启动 MuJoCo 仿真
+# === 终端 1（先起）===
+ros2 launch eiriarm_bringup bridge.launch.py
+# 自定义串口号：
+ros2 launch eiriarm_bringup bridge.launch.py device:=/dev/ttyACM1
+
+# === 终端 2（控制器）===
+
+# 默认: 双臂示教 + 双夹爪
+ros2 launch eiriarm_bringup real_robot.launch.py
+
+# 双臂关节 PD 跟踪
+ros2 launch eiriarm_bringup real_robot.launch.py controller:=joint_position
+
+# 双臂笛卡尔 PD
+ros2 launch eiriarm_bringup real_robot.launch.py controller:=cartesian_position
+
+# 只起左臂(ch1)，不要夹爪
+ros2 launch eiriarm_bringup real_robot.launch.py arms:=left gripper:=false
+```
+
+---
+
+## 与子 launch 的关系
+
+两个顶层 launch 都是薄封装：
+
+```
+eiriarm_bringup/launch/
+├── bridge.launch.py
+│   └── usb2can/launch/usb2can_with_dm.launch.py        (device, motors_config)
+│
+└── real_robot.launch.py
+    └── eiriarm_controllers/launch/dual_arm.launch.py   (arms, controller, gripper, offsets_yaml)
+```
+
+如果想跳过这一层封装，可以直接调子 launch：
+
+```bash
+# 只起 bridge
+ros2 launch usb2can usb2can_with_dm.launch.py device:=/dev/ttyACM0
+
+# 只起控制端 (bridge 必须已经在跑)
+ros2 launch eiriarm_controllers dual_arm.launch.py controller:=joint_position
+```
+
+但日常推荐直接用 `bridge.launch.py` + `real_robot.launch.py`。
+
+---
+
+## 关键配置文件
+
+| 路径 | 用途 |
+|---|---|
+| `eiriarm_controllers/config/dual_arm_controllers.yaml` | ros2_control + 各控制器（joints, gravity_gains, friction_gains 等）|
+| `eiriarm_controllers/config/gripper_controller.yaml` | 夹爪节点（校准、力阈值、HOLD PD 等）|
+| `eiriarm_controllers/config/dual_arm_ros2_control.urdf.xacro` | URDF（含 `<ros2_control>` 块）|
+| `usb2can/config/dm_motors_eiriarm.yaml` | DM 电机 per-motor 限幅 |
+| `usb2can/config/usb2can.yaml` | USB-CAN 串口参数 |
+| `joint_offsets_dual.yaml` (workspace 根) | 14 关节零位标定 |
+
+---
+
+## 关闭
+
+两个终端各自 `Ctrl+C` 即可。**先关控制端（终端 2），再关 bridge（终端 1）**，否则
+关 bridge 时电机还在收 cmd，会丢 DISABLE 帧。
+
+控制端（终端 2）的关闭流程：
+
+1. SIGINT 同时到 `controller_manager` 和 `gripper_controller_node`
+2. `gripper_controller_node` 先暂停 cmd 发布，等 arm DISABLE 完成（最多 3 s）
+3. `dm_hardware_interface` 在 `on_deactivate` 里 20 Hz × 5 s 发 FD，直到所有关节 `err=0`
+4. `gripper_controller_node` 再 5 Hz × 3 s 发 FD 把夹爪也关掉
+
+Bridge（终端 1）`Ctrl+C` 即关，没有特殊收尾。
+
+---
+
+## 仿真
+
+仿真路径独立，不走 `real_robot.launch.py`。详见 `system.launch.py` / `simulation.launch.py` / `mujoco_sim.launch.py` 与 `controllers.launch.py`。
+
+```bash
+# MuJoCo + 控制器 (默认 impedance)
+ros2 launch eiriarm_bringup system.launch.py
+
+# 仅仿真
 ros2 launch eiriarm_bringup mujoco_sim.launch.py
 
-# 终端2：启动控制器
-ros2 launch eiriarm_bringup controllers.launch.py controller_type:=impedance
+# 仅控制器（连到外部仿真）
+ros2 launch eiriarm_bringup controllers.launch.py controller_type:=gravity_compensation
 ```
+
+注意：仿真用的是 `dual_arm_robot_plug.urdf` + `ros2_control_controllers.yaml`，与真机的 `dual_arm_ros2_control.urdf.xacro` + `dual_arm_controllers.yaml` 是两套独立配置。
 
 ---
 
-## 🎮 控制器类型
-
-### 1. 阻抗控制器（impedance）
-
-**特点**：
-- 柔顺控制，允许外力干扰
-- 自动保持初始姿态
-- 可通过话题发送目标位置
-
-**启动**：
-```bash
-ros2 launch eiriarm_bringup system.launch.py controller_type:=impedance
-```
-
-**发送目标命令**：
-```bash
-# 使用示例脚本
-ros2 run eiriarm_controllers send_target_command.py
-
-# 或手动发布
-ros2 topic pub /joint_impedance_controller/target_joint_states sensor_msgs/msg/JointState \
-  "{name: ['right_joint_0'], position: [0.5]}"
-```
-
-**配置文件**：
-- `/src/eiriarm_controllers/config/ros2_control_controllers.yaml`
-
-**参数调整**：
-```yaml
-# 刚度和阻尼
-gains:
-  right_joint_0:
-    stiffness: 30.0  # 位置恢复力
-    damping: 6.0     # 速度阻尼
-
-# 安全限制
-position_error_limit: 1.5      # 最大位置误差（rad）
-velocity_saturation: 8.0       # 速度误差限制（rad/s）
-velocity_filter_alpha: 0.98    # 速度滤波强度
-```
-
----
-
-### 2. 重力补偿控制器（gravity_compensation）
-
-**特点**：
-- 仅补偿重力
-- 机器人可自由移动（零刚度）
-- 用于示教或手动操作
-
-**启动**：
-```bash
-ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
-```
-
-**配置文件**：
-- `/src/eiriarm_controllers/config/ros2_control_controllers.yaml`
-
----
-
-## 📊 话题和服务
-
-### 通用话题
-
-```bash
-# 关节状态（所有控制器）
-/joint_states                    # sensor_msgs/msg/JointState
-
-# 机器人描述
-/robot_description               # std_msgs/msg/String
-```
-
-### 阻抗控制器专用
-
-```bash
-# 目标位置命令
-/joint_impedance_controller/target_joint_states  # sensor_msgs/msg/JointState
-
-# 反馈（可选）
-/joint_impedance_controller/feedback             # sensor_msgs/msg/JointState
-```
-
-### 控制器管理服务
-
-```bash
-# 列出所有控制器
-ros2 control list_controllers
-
-# 切换控制器
-ros2 control switch_controllers \
-  --activate joint_impedance_controller \
-  --deactivate gravity_compensation_controller
-```
-
----
-
-## 🔧 配置文件
-
-### 控制器配置
-
-| 文件 | 用途 |
-|------|------|
-| `eiriarm_controllers/config/ros2_control_controllers.yaml` | 阻抗控制器和重力补偿控制器配置 |
-
-### URDF 配置
-
-| 文件 | 用途 |
-|------|------|
-| `dual_arm_support/urdf/dual_arm_robot_plug.urdf` | ros2_control 硬件接口配置 |
-
----
-
-## 🐛 故障排除
-
-### 问题1：控制器启动失败
-
-**症状**：
-```
-[spawner]: Failed to activate controller
-```
-
-**解决方案**：
-1. 确认 MuJoCo 仿真已启动
-2. 检查话题是否发布：
-   ```bash
-   ros2 topic list | grep joint
-   ```
-3. 查看控制器状态：
-   ```bash
-   ros2 control list_controllers
-   ```
-
-### 问题2：机器人抖动
-
-**原因**：阻抗控制器参数不合适
-
-**解决方案**：
-1. 降低阻尼增益（`damping`）
-2. 增大速度饱和限制（`velocity_saturation`）
-3. 增强速度滤波（`velocity_filter_alpha` 接近 1.0）
-
-参考配置：
-```yaml
-velocity_filter_alpha: 0.98
-velocity_saturation: 8.0
-gains:
-  right_joint_0:
-    damping: 6.0  # 降低此值
-```
-
-### 问题3：无法返回初始位置
-
-**原因**：位置误差限制过小
-
-**解决方案**：
-增大 `position_error_limit`：
-```yaml
-position_error_limit: 1.5  # 从 0.5 增加到 1.5
-```
-
-### 问题4：力矩不足
-
-**原因**：关节力矩限制
-
-**解决方案**：
-检查 URDF 中的关节限制：
-```xml
-<limit effort="40.0" .../>
-```
-
----
-
-## 📚 相关文档
-
-- **控制器详细说明**：`/src/eiriarm_controllers/README.md`
-- **迁移指南**：`/src/eiriarm_controllers/ROS2_CONTROL_MIGRATION_GUIDE.md`
-- **快速参考**：`/src/eiriarm_controllers/QUICK_REFERENCE.md`
-- **Topic Bridge 指南**：`/src/eiriarm_controllers/TOPIC_BRIDGE_GUIDE.md`
-
----
-
-## 🎯 示例工作流
-
-### 示例1：阻抗控制示教
-
-```bash
-# 1. 启动系统
-ros2 launch eiriarm_bringup system.launch.py
-
-# 2. 手动移动机器人到目标位置（在 MuJoCo 中拖动）
-
-# 3. 发送当前位置作为新目标
-ros2 topic pub --once /joint_impedance_controller/target_joint_states \
-  sensor_msgs/msg/JointState \
-  "{name: ['right_joint_0', 'right_joint_1'], position: [0.5, 0.3]}"
-
-# 4. 机器人会保持该位置
-```
-
-### 示例2：重力补偿模式
-
-```bash
-# 1. 启动重力补偿
-ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
-
-# 2. 机器人现在可以自由移动，但重力被补偿
-# 3. 在 MuJoCo 中手动移动机器人，感受零重力效果
-```
-
----
-
-## 💡 最佳实践
-
-1. **首次使用**：从重力补偿开始，熟悉系统
-2. **参数调整**：先在仿真中测试，再应用到实际机器人
-3. **安全第一**：设置合理的力矩限制和误差限制
-4. **分离调试**：使用分离启动方式便于查看日志
-5. **监控状态**：使用 `ros2 topic echo /joint_states` 监控关节状态
-
----
-
-## 🔄 版本历史
-
-- **v1.0.0**：初始版本，支持阻抗控制和重力补偿
-- **v1.1.0**：优化阻抗控制器参数，减少抖动
-- **v1.2.0**：添加完整系统启动文件
-- **v1.3.0**：修复关节索引映射问题，简化控制器架构
-
----
-
-## 📧 支持
-
-如有问题，请查看：
-1. 日志输出（`--ros-args --log-level debug`）
-2. 控制器状态（`ros2 control list_controllers`）
-3. 话题列表（`ros2 topic list`）
-4. 相关文档（见上方链接）
+## 故障排查
+
+### Bridge 起不来
+- `ls -l /dev/ttyACM*` 确认设备号
+- `groups | grep dialout` 确认当前用户在 dialout 组
+- 拔插 USB 后再试
+
+### `/dcu/command` 速率不对
+- 期望 ~300 Hz（`dm_motor_bridge` 内部 timer 决定）
+- 如果是 600~700 Hz，说明 bridge 是旧版本（per-cmd-publish 行为）。重启 `usb2can` launch。
+
+### 关节 ENABLE 超时
+- 检查 `/motor/chN/state`：电机是否在线（`err` 字段）
+- 检查电机 ID 是否在 `dm_motors_eiriarm.yaml` 里正确分配槽位
+- DM 电机偶发需要冷启动（断电再上电）
+
+### 关节 DISABLE 超时（残留 1~2 个 `err=1`）
+- 现已 20 Hz × 5 s 重发 FD（共 100 次机会），仍然超时多半是 CAN 噪声或电机短暂卡顿
+- 实际 motor 已关闭（torque=0），下次启动重新 FC 即可

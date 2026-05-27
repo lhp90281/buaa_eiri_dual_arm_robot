@@ -20,21 +20,33 @@ namespace eiriarm_controllers
 {
 
 /**
- * @brief Cartesian Position Controller Plugin for ros2_control
- * 
- * This controller receives target end-effector poses and uses Pinocchio IK
- * to compute joint positions. The joint positions are sent as commands to
- * MuJoCo position actuators (via the effort command interface as data conduit).
- * 
- * Supports dual-arm control with independent target poses for each arm.
- * 
+ * @brief Cartesian Position Controller for DM motors in MIT mode.
+ *
+ * Receives target end-effector poses, solves Pinocchio damped-LS IK to
+ * obtain joint angles, smooths them under a max joint-speed limit, and
+ * forwards the (pos, vel_ff, kp, kd) tuple to the per-joint MIT-mode
+ * command interfaces. The DM motor itself runs the PD inner loop:
+ *     tau_motor = kp*(q_des - q) + kd*(qdot_des - qdot)
+ *               + tau_gravity (from gravity_compensation_controller)
+ * so this controller never writes torque directly -- exactly matching
+ * the joint_position_controller interface contract, just with the
+ * setpoint coming from Cartesian-space IK instead of a JointTrajectory.
+ *
+ * Designed to coexist with gravity_compensation_controller (which owns
+ * the effort interface). Mutually exclusive with joint_position_controller
+ * (also writes the position / stiffness / damping interfaces).
+ *
  * Command topics:
- *   ~/left_target_pose  (geometry_msgs/PoseStamped)
- *   ~/right_target_pose (geometry_msgs/PoseStamped)
- * 
+ *   ~/left_target_pose   (geometry_msgs/PoseStamped)
+ *   ~/right_target_pose  (geometry_msgs/PoseStamped)
+ *   ~/joint_homing       (std_msgs/String) -- "left" / "right" / "both"
+ *
  * Feedback topics:
- *   ~/joint_position_feedback (sensor_msgs/JointState)
- *   ~/cartesian_state         (geometry_msgs/PoseStamped) - current EE pose
+ *   ~/joint_position_feedback   (sensor_msgs/JointState)
+ *   ~/left_cartesian_state      (geometry_msgs/PoseStamped) -- live EE FK
+ *   ~/right_cartesian_state     (geometry_msgs/PoseStamped) -- live EE FK
+ *   ~/homing_status             (std_msgs/String)
+ *   ~/{left,right}_homing_fk    (geometry_msgs/PoseStamped) -- one-shot
  */
 class CartesianPositionControllerPlugin : public controller_interface::ControllerInterface
 {
@@ -63,6 +75,8 @@ private:
 
   // Parameters
   std::vector<std::string> joint_names_;
+  std::vector<double> kp_gains_;        // motor stiffness, one per joint, joints[] order
+  std::vector<double> kd_gains_;        // motor damping,   one per joint, joints[] order
   std::string left_ee_frame_;
   std::string right_ee_frame_;
   int ik_max_iter_ = 100;
@@ -73,6 +87,13 @@ private:
   // Frame IDs
   int left_frame_id_ = -1;
   int right_frame_id_ = -1;
+
+  // Command interface stride: (position, velocity, stiffness, damping) per joint.
+  // State interface stride: (position, velocity) per joint.
+  // Layout MUST stay in sync with command_interface_configuration() /
+  // state_interface_configuration() below.
+  static constexpr size_t kCmdStride = 4;
+  static constexpr size_t kStateStride = 2;
 
   // State storage
   Eigen::VectorXd q_;           // current joint positions (full model)
@@ -98,6 +119,10 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr homing_status_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr left_homing_fk_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr right_homing_fk_pub_;
+  // Continuous live EE pose publishers (FK at q_meas, every tick if a
+  // subscriber is present so it costs nothing while no one is listening).
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr left_cartesian_state_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr right_cartesian_state_pub_;
 
   // Flags
   bool left_target_received_ = false;
