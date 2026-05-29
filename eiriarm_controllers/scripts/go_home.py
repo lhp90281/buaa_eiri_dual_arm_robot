@@ -154,7 +154,12 @@ def main():
                    help='override joint list (default: query controller)')
     p.add_argument('--no-restore-gravity', action='store_true',
                    help='leave joint_position_controller active afterwards')
-    args = p.parse_args()
+    # Strip ROS 2 CLI args (e.g. `--ros-args -r __node:=go_home` injected
+    # by launch_ros.actions.Node) before argparse sees them; otherwise
+    # argparse aborts with "unrecognized arguments". Same pattern is
+    # used in zero_at_current_pose.py / joint_state_translator.py.
+    argv = rclpy.utilities.remove_ros_args(args=sys.argv)[1:]
+    args = p.parse_args(argv)
 
     if args.duration <= 0.0:
         print("ERROR: --duration must be > 0", file=sys.stderr)

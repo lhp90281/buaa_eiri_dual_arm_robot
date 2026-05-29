@@ -29,7 +29,7 @@ Common invocations
   ros2 launch eiriarm_bringup real_robot.launch.py controller:=joint_position
 
   # Both arms with the cartesian PD coordinator:
-  ros2 launch eiriarm_bringup real_robot.launch.py controller:=cartesian_position
+
 
   # Single-arm bring-up (e.g. left only -- ch1):
   ros2 launch eiriarm_bringup real_robot.launch.py arms:=left

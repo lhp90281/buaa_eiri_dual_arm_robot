@@ -570,6 +570,10 @@ def _calibrate_zero_pose(
                 'sample_spread': float(spread),
                 'sample_count': len(positions),
                 'zero_offset': float(zero_offset),
+                # Placeholder. We can't infer sign from a single capture;
+                # operator must hand-verify after launch and flip to -1
+                # in the YAML for any joint that reads backwards.
+                'axis_sign': 1,
             })
 
         if too_few:
@@ -624,8 +628,10 @@ def _calibrate_one(node: CalibrationNode, joint: JointSpec,
             else:
                 # verify phase: apply the just-captured zero_offset and show
                 # the URDF-frame angle. urdf = raw - zero_offset (axis_sign
-                # is assumed +1 here; the user may flip it manually in the
-                # offsets YAML afterward). Also show degrees for sanity.
+                # is assumed +1 here; the script emits axis_sign:1 as a
+                # placeholder and the operator flips it to -1 by hand in
+                # the merged offsets YAML for any joint that reads backwards).
+                # Also show degrees for sanity.
                 urdf = s[0] - display['zero_offset']
                 line = (f'  [{joint.name}] verify: raw={s[0]:+.4f}  '
                         f'urdf={urdf:+.4f} rad  '
@@ -716,6 +722,11 @@ def _calibrate_one(node: CalibrationNode, joint: JointSpec,
                 'sample_spread': float(spread),
                 'sample_count': len(positions),
                 'zero_offset': float(zero_offset),
+                # Placeholder. We can't infer sign from a single hard-stop
+                # push (only one direction is observed); operator must
+                # hand-verify after launch and flip to -1 in the YAML for
+                # any joint that reads backwards.
+                'axis_sign': 1,
             }
     finally:
         live_stop.set()
@@ -729,7 +740,10 @@ def _write_offsets_yaml(path: Path, channel: int, mode: str,
         'channel': channel,
         'mode': mode,
         'note': ('zero_offset = raw_at_reference - urdf_pos_at_reference. '
-                 'Apply at runtime as urdf_pos = raw_pos - zero_offset.'),
+                 'Apply at runtime as urdf_pos = axis_sign * (raw_pos - '
+                 'zero_offset). axis_sign defaults to 1; verify each joint '
+                 'after launch by hand-pushing and watching /joint_states, '
+                 'flip to -1 here for any joint that moves backwards.'),
         'offsets': results,
     }
     path.parent.mkdir(parents=True, exist_ok=True)

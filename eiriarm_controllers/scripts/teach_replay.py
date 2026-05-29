@@ -7,12 +7,15 @@ Workflow:
   2. `record` --> drag the arm by hand; samples /joint_states at a fixed
                   rate and saves the trajectory to a YAML file. Stop with
                   Ctrl-C (or the --max-duration timeout).
-  3. Switch joint_position_controller to active (gravity comp can stay
-     active too -- they coexist; gravity gives the feed-forward torque,
-     joint_position_controller adds the PD around the recorded path).
-  4. `replay` --> publishes a single JointTrajectory on
-                  /joint_position_command; the controller's update()
-                  linearly interpolates between samples and tracks it.
+  3. `replay` --> by default, atomically activates
+                  joint_position_controller and deactivates
+                  gravity_compensation_controller via
+                  /controller_manager/switch_controller, then publishes
+                  a single JointTrajectory on /joint_position_command;
+                  the controller's update() linearly interpolates
+                  between samples and tracks it. On exit (clean or
+                  Ctrl-C) the switch is reversed, so the arm always
+                  ends in gravity-comp / teach mode again.
 
 Examples:
     # record at 50 Hz, all joints from /joint_states, until Ctrl-C
@@ -27,14 +30,22 @@ Examples:
     # recorded start pose (kp is high; ramp_in cushions the entry).
     teach_replay replay left_wave.yaml --time-scale 0.5 --ramp-in 3.0
 
+    # replay without touching the controller manager (use the legacy
+    # workflow where you switch controllers by hand before/after)
+    teach_replay replay left_wave.yaml --no-auto-switch
+
 Pre-flight checks:
     Record: joint_position_controller MUST be inactive, otherwise its PD
-    fights the user dragging the arm. The script does NOT auto-deactivate
-    it. Run:
+    fights the user dragging the arm. The default
+    `real_robot.launch.py controller:=gravity` (or any non-
+    joint_position mode) is correct. The script does NOT auto-deactivate
+    it; if it is active, run:
         ros2 control switch_controllers --deactivate joint_position_controller
 
-    Replay: joint_position_controller MUST be active. Run:
-        ros2 control switch_controllers --activate joint_position_controller
+    Replay: joint_position_controller must be LOADED. The default
+    dual_arm.launch.py loads it in every mode (active or inactive),
+    so this is already the case. With auto-switch enabled (default)
+    the script handles activation/deactivation for you.
 """
 import argparse
 import bisect
@@ -58,6 +69,51 @@ from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from controller_manager_msgs.srv import SwitchController
+
+
+def _switch_controllers(node, activate=None, deactivate=None, timeout=10.0):
+    """Atomic activate/deactivate via /controller_manager/switch_controller.
+
+    Mirrors go_home.py's helper -- BEST_EFFORT strictness so trying to
+    deactivate an already-inactive controller is a no-op rather than an
+    error. Returns True on success, False on service-call failure or
+    ok=False reply. With activate=deactivate=[] (or None) this is a
+    no-op and returns True.
+    """
+    activate = list(activate or [])
+    deactivate = list(deactivate or [])
+    if not activate and not deactivate:
+        return True
+    client = node.create_client(
+        SwitchController, '/controller_manager/switch_controller')
+    try:
+        if not client.wait_for_service(timeout_sec=timeout):
+            node.get_logger().error(
+                '/controller_manager/switch_controller not available')
+            return False
+        req = SwitchController.Request()
+        req.activate_controllers = activate
+        req.deactivate_controllers = deactivate
+        req.strictness = SwitchController.Request.BEST_EFFORT
+        req.activate_asap = False
+        fut = client.call_async(req)
+        rclpy.spin_until_future_complete(node, fut, timeout_sec=timeout)
+        resp = fut.result()
+        if resp is None:
+            node.get_logger().error(
+                '/controller_manager/switch_controller did not respond')
+            return False
+        if not resp.ok:
+            node.get_logger().error(
+                f'switch_controller returned ok=False '
+                f'(activate={activate}, deactivate={deactivate})')
+            return False
+        node.get_logger().info(
+            f'controllers switched (+{activate} -{deactivate})')
+        return True
+    finally:
+        node.destroy_client(client)
 
 
 def _setup_keyboard_listener():
@@ -280,6 +336,38 @@ def cmd_replay(args) -> int:
     prev_sigint = signal.signal(signal.SIGINT, on_signal)
     prev_sigterm = signal.signal(signal.SIGTERM, on_signal)
 
+    # ---- auto-switch INTO joint_position_controller ---------------------
+    # Without this, the user must run `ros2 control switch_controllers`
+    # by hand before replay (the gravity-comp controller owns the effort
+    # interface so /joint_position_command would have no subscriber).
+    # `_switch_controllers` is BEST_EFFORT, so deactivating an already-
+    # inactive gravity_comp (e.g. when controller:=joint_position is
+    # active) is a no-op rather than an error.
+    switched_in = False
+    if args.auto_switch:
+        if not _switch_controllers(
+                node,
+                activate=[args.position_controller],
+                deactivate=[args.gravity_controller]):
+            node.get_logger().error(
+                'auto-switch failed; aborting replay. Pass '
+                '--no-auto-switch to run the legacy manual workflow.')
+            rclpy.try_shutdown()
+            signal.signal(signal.SIGINT, prev_sigint)
+            signal.signal(signal.SIGTERM, prev_sigterm)
+            return 1
+        switched_in = True
+
+    def _restore_switch():
+        # Called from every exit path below. Safe to call even when we
+        # never switched (no-op). The node is still alive here because
+        # rclpy.try_shutdown() runs AFTER us in the same finally block.
+        if switched_in:
+            _switch_controllers(
+                node,
+                activate=[args.gravity_controller],
+                deactivate=[args.position_controller])
+
     pub = node.create_publisher(
         JointTrajectory, args.command_topic,
         QoSProfile(depth=1,
@@ -299,6 +387,7 @@ def cmd_replay(args) -> int:
         node.get_logger().error(
             f"No subscriber on {args.command_topic}. Is "
             f"joint_position_controller active?")
+        _restore_switch()
         rclpy.try_shutdown()
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)
@@ -318,6 +407,7 @@ def cmd_replay(args) -> int:
 
     if args.dry_run:
         node.get_logger().info("--dry-run: not publishing")
+        _restore_switch()
         rclpy.try_shutdown()
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)
@@ -455,8 +545,10 @@ def cmd_replay(args) -> int:
         # controller's hold target. For 'q'/Ctrl-C/SIGINT, we deliberately
         # do NOT re-publish anything here -- the most recent streamed
         # point is the current setpoint, and re-snapping to it would only
-        # add jitter. The motor PD holds there with its yaml kp/kd until
-        # the user sends a new trajectory or deactivates the controller.
+        # add jitter. The motor PD holds there briefly until we restore
+        # gravity-comp on the next line, which is the bumpless hand-off
+        # (joint_position_controller's on_deactivate zeros kp/kd).
+        _restore_switch()
         rclpy.try_shutdown()
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)
@@ -504,9 +596,32 @@ def main() -> int:
                        help='trajectory topic (default /joint_position_command)')
     p_rep.add_argument('--dry-run', action='store_true',
                        help='build and log the trajectory but do not publish')
+    p_rep.add_argument('--auto-switch', dest='auto_switch',
+                       action='store_true', default=True,
+                       help='before replay, activate '
+                            'joint_position_controller and deactivate '
+                            'gravity_compensation_controller; reverse on '
+                            'exit (default ON)')
+    p_rep.add_argument('--no-auto-switch', dest='auto_switch',
+                       action='store_false',
+                       help='do not touch the controller manager '
+                            '(legacy: switch controllers by hand)')
+    p_rep.add_argument('--position-controller',
+                       default='joint_position_controller',
+                       help='controller to activate during replay '
+                            '(default joint_position_controller)')
+    p_rep.add_argument('--gravity-controller',
+                       default='gravity_compensation_controller',
+                       help='controller to restore after replay '
+                            '(default gravity_compensation_controller)')
     p_rep.set_defaults(func=cmd_replay)
 
-    args = p.parse_args()
+    # Strip ROS 2 CLI args (e.g. `--ros-args -r __node:=teach_replayer`
+    # injected by launch_ros.actions.Node) before argparse sees them;
+    # otherwise argparse aborts with "unrecognized arguments". Same
+    # pattern is used in zero_at_current_pose.py / joint_state_translator.py.
+    argv = rclpy.utilities.remove_ros_args(args=sys.argv)[1:]
+    args = p.parse_args(argv)
     return args.func(args)
 
 

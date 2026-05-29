@@ -46,8 +46,11 @@ ENABLED 之后才发夹爪命令，避免 CAN 总线在使能阶段相互踩踏�
 2. `controller_manager` (`ros2_control_node`) —— 加载 `DMHardwareInterface`
 3. `joint_state_broadcaster`（始终 active）
 4. `gravity_compensation_controller`（始终 active）
-5. 顶层控制器（看 `controller:=` 参数；可选）
-6. `gripper_controller_node`（看 `gripper:=` 参数；可选；自动校准）
+5. `joint_position_controller`（**始终 LOAD**：当 `controller:=joint_position` 时
+   active，否则 inactive。这样 `go_home.launch.py` / `replay.launch.py` 可以
+   直接切进去，不需要先手动 `ros2 control load_controller`）
+6. 仅当 `controller:=cartesian_position` 时额外加载 cartesian_position_controller
+7. `gripper_controller_node`（看 `gripper:=` 参数；可选；自动校准）
 
 **默认就处于"重力补偿 + 双夹爪自动校准"的示教模式**，不需要再 `ros2 control switch_controllers`。
 
@@ -97,17 +100,126 @@ ros2 launch eiriarm_bringup real_robot.launch.py arms:=left gripper:=false
 
 ---
 
+## 辅助 launch（第三终端）
+
+`real_robot.launch.py` 起来之后，常用的"动作脚本"也都封装成 launch 放在 bringup
+里，不需要直接 `ros2 run eiriarm_controllers <script>`。这些 launch **都假设
+`real_robot.launch.py` 已经在跑**，自己只是发服务调用 + 发 trajectory。
+
+| Launch | 作用 | 控制器切换 |
+|---|---|---|
+| `go_home.launch.py` | 把当前位姿斜线插值到 `q=0`，再切回示教模式 | 自动 |
+| `record.launch.py`  | 拖动示教时按固定频率采 `/joint_states` → YAML | 不切换（默认 gravity 模式就行） |
+| `replay.launch.py`  | 把录的 YAML 回放到 `joint_position_controller` | 自动（运行前切入、退出时切回） |
+
+### `go_home.launch.py`
+
+```bash
+# 默认 5 s 把当前位姿斜线插值到全零，结束后恢复 gravity-comp
+ros2 launch eiriarm_bringup go_home.launch.py
+
+# 慢一点（8 s），并且不要切回 gravity（下一步直接接 replay 时用）
+ros2 launch eiriarm_bringup go_home.launch.py duration:=8.0 restore_gravity:=false
+
+# 只让左臂回零
+ros2 launch eiriarm_bringup go_home.launch.py \
+     joints:='left_joint_0 left_joint_1 left_joint_2 left_joint_3 \
+              left_joint_4 left_joint_5 left_joint_6'
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `duration` | `5.0` | 从当前位姿斜插到 `q=0` 的秒数 |
+| `restore_gravity` | `true` | 结束后切回 gravity_compensation_controller |
+| `joints` | （空） | 留空 → 读 `joint_position_controller` 的 `joints` 参数 |
+| `command_topic` | `/joint_position_command` | trajectory 主题 |
+
+### `record.launch.py`
+
+录制要求 `joint_position_controller` **inactive**（PD 会和拖动对抗），所以默认的
+`controller:=gravity` 启动就是正确状态。
+
+```bash
+# 50 Hz 录所有关节，'q' 或 Ctrl+C 停止
+ros2 launch eiriarm_bringup record.launch.py output:=left_wave.yaml
+
+# 只录左臂
+ros2 launch eiriarm_bringup record.launch.py \
+     output:=left_wave.yaml \
+     joints:='left_joint_0 left_joint_1 left_joint_2 left_joint_3 \
+              left_joint_4 left_joint_5 left_joint_6'
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `output` | **必填** | 输出 YAML 路径 |
+| `rate` | `50.0` | 采样频率 (Hz) |
+| `joints` | （空） | 留空 → `/joint_states` 里所有关节 |
+| `max_duration` | `120.0` | 最长录制秒数 |
+
+### `replay.launch.py`
+
+默认会自动 `switch_controllers`：开始时切到 `joint_position_controller`，结束（含
+Ctrl+C）时切回 `gravity_compensation_controller`。
+
+```bash
+# 实时回放 + 2 s ramp-in
+ros2 launch eiriarm_bringup replay.launch.py input:=left_wave.yaml
+
+# 半速 + 更长 ramp-in（录制起点远离当前位姿时）
+ros2 launch eiriarm_bringup replay.launch.py input:=left_wave.yaml \
+     time_scale:=0.5 ramp_in:=3.0
+
+# 走老流程：launch 不动 controller_manager，由你自己切
+ros2 launch eiriarm_bringup replay.launch.py input:=left_wave.yaml \
+     auto_switch:=false
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `input` | **必填** | record 出的 YAML |
+| `time_scale` | `1.0` | 1.0=实时，0.5=半速 |
+| `ramp_in` | `2.0` | 从当前位姿斜插到录制起点的秒数 |
+| `publish_rate` | `50.0` | setpoint 流式速率 (Hz) |
+| `command_topic` | `/joint_position_command` | trajectory 主题 |
+| `auto_switch` | `true` | 自动切控制器；`false` 走老流程 |
+
+### 典型工作流
+
+```bash
+# 终端 1
+ros2 launch eiriarm_bringup bridge.launch.py
+# 终端 2
+ros2 launch eiriarm_bringup real_robot.launch.py
+# 终端 3 —— 拖动示教
+ros2 launch eiriarm_bringup record.launch.py output:=/tmp/wave.yaml
+# 拖完按 'q' 停。然后回零再回放：
+ros2 launch eiriarm_bringup go_home.launch.py
+ros2 launch eiriarm_bringup replay.launch.py input:=/tmp/wave.yaml
+```
+
+---
+
 ## 与子 launch 的关系
 
-两个顶层 launch 都是薄封装：
+bringup 的 launch 都是薄封装：
 
 ```
 eiriarm_bringup/launch/
 ├── bridge.launch.py
 │   └── usb2can/launch/usb2can_with_dm.launch.py        (device, motors_config)
 │
-└── real_robot.launch.py
-    └── eiriarm_controllers/launch/dual_arm.launch.py   (arms, controller, gripper, offsets_yaml)
+├── real_robot.launch.py
+│   └── eiriarm_controllers/launch/dual_arm.launch.py   (arms, controller, gripper, offsets_yaml)
+│
+├── go_home.launch.py
+│   └── ros2 run eiriarm_controllers go_home            (--duration --joints --no-restore-gravity ...)
+│
+├── record.launch.py
+│   └── ros2 run eiriarm_controllers teach_replay record  (--output --rate --joints ...)
+│
+└── replay.launch.py
+    └── ros2 run eiriarm_controllers teach_replay replay  (input --time-scale --ramp-in --no-auto-switch ...)
 ```
 
 如果想跳过这一层封装，可以直接调子 launch：

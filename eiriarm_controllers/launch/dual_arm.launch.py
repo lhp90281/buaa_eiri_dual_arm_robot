@@ -20,15 +20,17 @@ Brings up:
   1. robot_state_publisher (URDF processed via xacro with the ros2_control block)
   2. controller_manager / ros2_control_node loading DMHardwareInterface
   3. joint_state_broadcaster (always active)
-  4. The controller selected by `controller:=` (always active):
-       - gravity              -> gravity_compensation_controller only
-       - joint_position       -> gravity + joint_position_controller
-       - cartesian_position   -> gravity + cartesian_position_controller
-                                 (requires arms:=dual)
-     Other controllers are NOT loaded -- no manual `ros2 control
-     switch_controllers` is required.
-  5. gripper_controller standalone node (talks to ch1.id7 / ch2.id7 directly,
-     auto-calibrates open->close on startup; toggle with gripper:=true|false)
+  4. gravity_compensation_controller (always active)
+  5. joint_position_controller (always LOADED; ACTIVE iff
+     controller:=joint_position, otherwise inactive). Kept loaded in
+     every mode so the helper launches `go_home.launch.py` and
+     `replay.launch.py` can switch into it without the operator
+     touching `ros2 control switch_controllers`.
+  6. cartesian_position_controller (active, ONLY when
+     controller:=cartesian_position; requires arms:=dual).
+  7. gripper_controller standalone node (talks to ch1.id7 / ch2.id7
+     directly, auto-calibrates open->close on startup; toggle with
+     gripper:=true|false).
 
 Usage:
   # both arms in pure gravity-comp / teach mode (default):
@@ -221,17 +223,28 @@ def launch_setup(context, *args, **kwargs):
         gravity_spawner,
     ]
 
-    # Top-tier controller: spawn ACTIVE based on `controller`. Other tiers are
-    # not loaded -- this avoids the operator having to call
-    # `ros2 control switch_controllers` after launch.
-    if controller == 'joint_position':
-        nodes.append(Node(
-            package='controller_manager',
-            executable='spawner',
-            arguments=['joint_position_controller', '-c', '/controller_manager'],
-            output='screen',
-        ))
-    elif controller == 'cartesian_position':
+    # Top-tier controller layout:
+    #   * gravity_compensation_controller: always active (above).
+    #   * joint_position_controller: ALWAYS LOADED. Active when
+    #       controller==joint_position, otherwise inactive. We load it
+    #       inactive even in gravity / cartesian mode so the helper
+    #       scripts (`go_home`, teach `replay`) can switch into it via
+    #       /controller_manager/switch_controller without the operator
+    #       having to load it by hand.
+    #   * cartesian_position_controller: only loaded when explicitly
+    #       selected (it is a dual-arm coordinator, requires arms==dual,
+    #       and is not used by any of the bringup helper scripts).
+    jp_args = ['joint_position_controller', '-c', '/controller_manager']
+    if controller != 'joint_position':
+        jp_args.append('--inactive')
+    nodes.append(Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=jp_args,
+        output='screen',
+    ))
+
+    if controller == 'cartesian_position':
         # Pre-condition checked above (arms == 'dual').
         nodes.append(Node(
             package='controller_manager',
@@ -239,7 +252,7 @@ def launch_setup(context, *args, **kwargs):
             arguments=['cartesian_position_controller', '-c', '/controller_manager'],
             output='screen',
         ))
-    # else controller == 'gravity': nothing extra to spawn.
+    # else controller in {gravity, joint_position}: nothing else to spawn.
 
     # Gripper controller: standalone node OUTSIDE ros2_control. Talks directly
     # to /motor/ch1/cmd (left, slot 7) and /motor/ch2/cmd (right, slot 7),
@@ -288,8 +301,10 @@ def generate_launch_description():
             description=(
                 'Top-tier controller to load active alongside '
                 'gravity_compensation_controller (which is always active). '
-                'Other controllers are NOT loaded -- no manual '
-                '`ros2 control switch_controllers` is needed.'
+                'joint_position_controller is always LOADED (active iff '
+                'this is joint_position, otherwise inactive) so the '
+                'go_home / replay helpers can switch into it without '
+                'manual `ros2 control` calls.'
             ),
             choices=list(_VALID_CONTROLLERS),
         ),
