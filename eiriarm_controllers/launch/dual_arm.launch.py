@@ -3,14 +3,14 @@
 ros2_control launch for the dual 7-DoF arm (eiriarm) on real hardware.
 
 This is the control-side launch (controller_manager + spawners + optional
-gripper). The CAN bridge is a SEPARATE responsibility -- usually you want
-the top-level wrapper that brings up everything together:
+gripper). The CAN bridge is a SEPARATE responsibility and must already be
+running in another terminal:
 
-  ros2 launch eiriarm_bringup real_robot.launch.py
+  ros2 launch eiriarm_bringup bridge.launch.py
 
-...which forwards all of the args below and additionally starts
-usb2can_node + dm_motor_bridge. Run this launch directly only if the bridge
-is already up in another terminal.
+The bringup wrapper `real_robot.launch.py` only forwards the args below to
+this file; it does not start the bridge itself. Run this launch directly only
+if the bridge is already up.
 
 (Single board, two channels: ch1 = left arm, ch2 = right arm. Grippers on
 ch1.id7 / ch2.id7 are NOT exposed to ros2_control here -- they are owned by

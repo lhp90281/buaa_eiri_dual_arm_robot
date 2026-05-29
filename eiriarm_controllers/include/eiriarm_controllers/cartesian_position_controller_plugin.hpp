@@ -108,6 +108,12 @@ private:
   // Realtime buffers for target poses
   realtime_tools::RealtimeBuffer<geometry_msgs::msg::PoseStamped::SharedPtr> rt_left_target_;
   realtime_tools::RealtimeBuffer<geometry_msgs::msg::PoseStamped::SharedPtr> rt_right_target_;
+  std::atomic<uint64_t> left_target_seq_{0};
+  std::atomic<uint64_t> right_target_seq_{0};
+  uint64_t left_target_seq_consumed_{0};
+  uint64_t right_target_seq_consumed_{0};
+  bool left_target_pending_ = false;
+  bool right_target_pending_ = false;
 
   // Subscribers
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr left_target_sub_;

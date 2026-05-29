@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <limits>
+
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -101,9 +103,9 @@ private:
     double range_center{0.0};
     bool wrap_safe{true};
     // motor saturation (raw motor frame); from motor_type lookup
-    double pos_max{12.5};
-    double vel_max{30.0};
-    double tor_max{10.0};
+    double pos_max{std::numeric_limits<double>::quiet_NaN()};
+    double vel_max{std::numeric_limits<double>::quiet_NaN()};
+    double tor_max{std::numeric_limits<double>::quiet_NaN()};
   };
 
   // ---- helpers ----
@@ -121,6 +123,10 @@ private:
   // revolution the motor is currently in.
   double urdf_to_raw_pos_near(const JointCfg & j, double urdf_pos,
                               double current_raw) const;
+  static bool lookup_motor_limits(const std::string & motor_type,
+                                  double & pos_max,
+                                  double & vel_max,
+                                  double & tor_max);
   bool load_offsets_yaml(const std::string & path);
   void on_motor_state(int channel, const usb2can::msg::MotorStateArray::SharedPtr msg);
   void publish_enable_all(bool enable);

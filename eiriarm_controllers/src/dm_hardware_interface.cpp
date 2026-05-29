@@ -6,6 +6,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 
 #include "yaml-cpp/yaml.h"
 
@@ -15,6 +16,17 @@ namespace eiriarm_controllers
 namespace
 {
 constexpr double kTwoPi = 2.0 * M_PI;
+
+const std::unordered_map<std::string, std::tuple<double, double, double>> & motor_limit_table()
+{
+  static const std::unordered_map<std::string, std::tuple<double, double, double>> table = {
+    {"DM4310",  {12.5, 50.0, 10.0}},
+    {"DM4340",  {12.5, 20.0, 28.0}},
+    {"DM4340P", {12.5, 20.0, 28.0}},
+    {"DM8009",  {12.5, 45.0, 54.0}},
+  };
+  return table;
+}
 
 bool parse_double(const std::string & s, double & out)
 {
@@ -30,6 +42,23 @@ double sanitize(double v) { return std::isfinite(v) ? v : 0.0; }
 }  // namespace
 
 DMHardwareInterface::DMHardwareInterface() = default;
+
+bool DMHardwareInterface::lookup_motor_limits(
+  const std::string & motor_type,
+  double & pos_max,
+  double & vel_max,
+  double & tor_max)
+{
+  const auto & table = motor_limit_table();
+  auto it = table.find(motor_type);
+  if (it == table.end()) {
+    return false;
+  }
+  pos_max = std::get<0>(it->second);
+  vel_max = std::get<1>(it->second);
+  tor_max = std::get<2>(it->second);
+  return true;
+}
 
 double DMHardwareInterface::wrap_to_window(double x, double center)
 {
@@ -191,6 +220,19 @@ hardware_interface::CallbackReturn DMHardwareInterface::on_init(
     double v;
     if (parse_double(get("urdf_lower"), v)) j.urdf_lower = v;
     if (parse_double(get("urdf_upper"), v)) j.urdf_upper = v;
+
+    double tbl_pos = std::numeric_limits<double>::quiet_NaN();
+    double tbl_vel = std::numeric_limits<double>::quiet_NaN();
+    double tbl_tor = std::numeric_limits<double>::quiet_NaN();
+    if (!lookup_motor_limits(j.motor_type, tbl_pos, tbl_vel, tbl_tor)) {
+      RCLCPP_ERROR(rclcpp::get_logger("DMHardwareInterface"),
+                   "Joint '%s' has unknown motor_type='%s' (expected DM4310/DM4340/DM4340P/DM8009)",
+                   j.name.c_str(), j.motor_type.c_str());
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+    j.pos_max = tbl_pos;
+    j.vel_max = tbl_vel;
+    j.tor_max = tbl_tor;
     if (parse_double(get("pos_max"), v)) j.pos_max = v;
     if (parse_double(get("vel_max"), v)) j.vel_max = v;
     if (parse_double(get("tor_max"), v)) j.tor_max = v;
@@ -235,10 +277,11 @@ hardware_interface::CallbackReturn DMHardwareInterface::on_init(
   // ---- log summary ----
   for (const auto & j : joints_) {
     RCLCPP_INFO(rclcpp::get_logger("DMHardwareInterface"),
-                "  %-12s ch%d.slot%d  type=%-8s offset=%+.4f sign=%+.0f urdf=[%+.3f,%+.3f] center=%+.3f wrap_safe=%s",
+                "  %-12s ch%d.slot%d  type=%-8s offset=%+.4f sign=%+.0f urdf=[%+.3f,%+.3f] center=%+.3f wrap_safe=%s pos_max=%.1f vel_max=%.1f tor_max=%.1f",
                 j.name.c_str(), j.channel, j.slot, j.motor_type.c_str(),
                 j.zero_offset, j.axis_sign, j.urdf_lower, j.urdf_upper,
-                j.range_center, j.wrap_safe ? "true" : "false");
+                j.range_center, j.wrap_safe ? "true" : "false",
+                j.pos_max, j.vel_max, j.tor_max);
   }
 
   return hardware_interface::CallbackReturn::SUCCESS;
@@ -540,7 +583,9 @@ void DMHardwareInterface::on_motor_state(int ch,
       std::abs(m.position + j.pos_max) < EPS &&
       std::abs(m.velocity + j.vel_max) < EPS &&
       std::abs(m.torque   + j.tor_max) < EPS;
-    if (is_sentinel) continue;
+    if (is_sentinel) {
+      continue;
+    }
     last_err_[idx]     = static_cast<int>(m.err);
     last_pos_raw_[idx] = static_cast<double>(m.position);
     state_pos_[idx] = raw_to_urdf_pos(j, static_cast<double>(m.position));
@@ -619,7 +664,8 @@ hardware_interface::return_type DMHardwareInterface::write(
         pos_raw = urdf_to_raw_pos_near(j, pos_urdf, last_pos_raw_[idx]);
         vel_raw = j.axis_sign * vel_urdf;
       }
-      const double tau_raw = j.axis_sign * eff_urdf;
+      const double eff_clamped = std::clamp(eff_urdf, -j.tor_max, j.tor_max);
+      const double tau_raw = j.axis_sign * eff_clamped;
 
       usb2can::msg::MotorCommand m;
       m.id        = static_cast<uint8_t>(j.slot);

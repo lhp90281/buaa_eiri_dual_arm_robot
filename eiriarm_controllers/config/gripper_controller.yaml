@@ -51,7 +51,7 @@ gripper_controller:
     left_cal_kd: 0.5                      # Nm/(rad/s)
     left_cal_stall_torque: 0.5            # Nm; must stay above this AND
     left_cal_stall_vel_thr: 0.2           # rad/s; below this, for
-    left_cal_stall_ticks: 50              # this many consecutive ticks (=100 ms @500 Hz)
+    left_cal_stall_ticks: 5               # this many consecutive ticks (=100 ms @50 Hz)
     left_cal_phase_timeout_s: 15.0        # per-phase abort if no stall by then
 
     # Run-time motion / hold tunables.
@@ -89,7 +89,7 @@ gripper_controller:
     right_cal_kd: 0.5
     right_cal_stall_torque: 0.5
     right_cal_stall_vel_thr: 0.2
-    right_cal_stall_ticks: 50
+    right_cal_stall_ticks: 5               # this many consecutive ticks (=100 ms @50 Hz)
     right_cal_phase_timeout_s: 15.0
     right_move_speed: 6.5
     right_move_kp: 5.0

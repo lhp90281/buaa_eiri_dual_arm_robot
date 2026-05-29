@@ -4,16 +4,17 @@
 Sequence:
     1. Read the position controller's `joints` parameter so we know which
        joints to drive (and at what order).
-    2. switch_controller: activate joint_position_controller, deactivate
-       gravity_compensation_controller. The activation snapshots the
-       current measured pose as hold_pos_, so the next step ramps from
-       wherever the arm is right now.
+    2. switch_controller: activate joint_position_controller while keeping
+       gravity_compensation_controller active; deactivate cartesian only if
+       it is currently active. The activation snapshots the current
+       measured pose as hold_pos_, so the next step ramps from wherever the
+       arm is right now.
     3. Publish a 1-point JointTrajectory with positions all zero and
        time_from_start = --duration. The controller's pre-roll segment
        linearly interpolates from hold_pos_ to zero over that window.
     4. Sleep --duration (+ small margin) so the ramp completes.
-    5. switch_controller: activate gravity_compensation_controller,
-       deactivate joint_position_controller. Hand-off is bumpless because
+    5. If requested, deactivate joint_position_controller only; gravity
+       compensation remains active throughout. Hand-off is bumpless because
        on_deactivate zeros kp/kd before releasing the joints.
 
 Cleanup guarantees:
@@ -44,7 +45,7 @@ import rclpy
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 
-from controller_manager_msgs.srv import SwitchController
+from controller_manager_msgs.srv import SwitchController, ListControllers
 from rcl_interfaces.srv import GetParameters
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
@@ -82,11 +83,30 @@ def query_controller_joints(node, controller_name):
     return list(v.string_array_value)
 
 
-def switch_controllers(node, activate=None, deactivate=None):
+def controller_is_active(node, controller_name):
+    client = node.create_client(ListControllers, '/controller_manager/list_controllers')
+    try:
+        if not client.wait_for_service(timeout_sec=5.0):
+            return False
+        req = ListControllers.Request()
+        fut = client.call_async(req)
+        rclpy.spin_until_future_complete(node, fut, timeout_sec=5.0)
+        resp = fut.result()
+        if resp is None:
+            return False
+        for c in resp.controller:
+            if c.name == controller_name:
+                return c.state == 'active'
+        return False
+    finally:
+        node.destroy_client(client)
+
+
+def switch_controllers(node, activate=None, deactivate=None, strict=True):
     """Atomic activate/deactivate via /controller_manager/switch_controller.
 
-    Uses BEST_EFFORT strictness, so a no-op (e.g. deactivating an already-
-    inactive controller) does not fail the call.
+    Prefer STRICT so we never end up in a half-switched state where gravity
+    compensation is dropped before the replacement controller is active.
     """
     activate = list(activate or [])
     deactivate = list(deactivate or [])
@@ -97,11 +117,10 @@ def switch_controllers(node, activate=None, deactivate=None):
     req = SwitchController.Request()
     req.activate_controllers = activate
     req.deactivate_controllers = deactivate
-    req.strictness = SwitchController.Request.BEST_EFFORT
+    req.strictness = (
+        SwitchController.Request.STRICT if strict
+        else SwitchController.Request.BEST_EFFORT)
     req.activate_asap = False
-    # `timeout` is a builtin_interfaces/Duration sub-message in Humble.
-    # Leaving it at its default-constructed value (0s) tells the
-    # controller manager to use its own internal default.
     resp = _call_service(node, client, req, timeout=10.0)
     node.destroy_client(client)
     if resp is None:
@@ -146,8 +165,11 @@ def main():
                    help='controller to drive the ramp '
                         '(default joint_position_controller)')
     p.add_argument('--gravity-controller', default='gravity_compensation_controller',
-                   help='controller to restore afterwards '
+                   help='controller to keep active during the ramp '
                         '(default gravity_compensation_controller)')
+    p.add_argument('--cartesian-controller', default='cartesian_position_controller',
+                   help='controller to deactivate if active '
+                        '(default cartesian_position_controller)')
     p.add_argument('--command-topic', default='/joint_position_command',
                    help='trajectory topic (default /joint_position_command)')
     p.add_argument('--joints', nargs='*', default=None,
@@ -195,10 +217,26 @@ def main():
             node.get_logger().info(f"  - {j}")
 
         # ---- switch to position controller -----------------------------
+        activate = [args.position_controller]
+        if not controller_is_active(node, args.gravity_controller):
+            activate.append(args.gravity_controller)
+        deactivate = []
+        if controller_is_active(node, args.cartesian_controller):
+            deactivate.append(args.cartesian_controller)
         if not switch_controllers(
                 node,
-                activate=[args.position_controller],
-                deactivate=[args.gravity_controller]):
+                activate=activate,
+                deactivate=deactivate):
+            return 1
+        # Confirm the position controller is really active before streaming.
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not stop_flag['val']:
+            if controller_is_active(node, args.position_controller):
+                break
+            rclpy.spin_once(node, timeout_sec=0.05)
+        else:
+            node.get_logger().error(
+                f"{args.position_controller} did not become active; aborting before publish")
             return 1
         switched_to_position = True
 
@@ -243,11 +281,14 @@ def main():
         else:
             node.get_logger().info("ramp complete; q ~= 0")
     finally:
-        # ---- restore gravity comp (always, unless suppressed) ----------
+        # ---- restore back to teach mode (gravity stays active) ----------
+        # Gravity compensation is already active in the default bringup
+        # and must remain active; the only thing we need to release is the
+        # joint-position controller.
         if switched_to_position and not args.no_restore_gravity:
             switch_controllers(
                 node,
-                activate=[args.gravity_controller],
+                activate=[],
                 deactivate=[args.position_controller])
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)

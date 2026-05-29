@@ -1,5 +1,6 @@
 #include "eiriarm_controllers/cartesian_position_controller_plugin.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <iomanip>
@@ -317,6 +318,8 @@ void CartesianPositionControllerPlugin::leftTargetCallback(
 {
   rt_left_target_.writeFromNonRT(msg);
   left_target_received_ = true;
+  left_target_pending_ = true;
+  left_target_seq_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void CartesianPositionControllerPlugin::rightTargetCallback(
@@ -324,6 +327,8 @@ void CartesianPositionControllerPlugin::rightTargetCallback(
 {
   rt_right_target_.writeFromNonRT(msg);
   right_target_received_ = true;
+  right_target_pending_ = true;
+  right_target_seq_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void CartesianPositionControllerPlugin::homingCallback(
@@ -359,6 +364,10 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     q_desired_ = q_;
     q_command_ = q_;
     q_home_ = q_;  // Save home configuration for joint-level homing
+    left_target_seq_consumed_ = left_target_seq_.load(std::memory_order_relaxed);
+    right_target_seq_consumed_ = right_target_seq_.load(std::memory_order_relaxed);
+    left_target_pending_ = false;
+    right_target_pending_ = false;
     initial_pose_captured_ = true;
     
     // Log initial EE poses
@@ -432,7 +441,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
         pinocchio::SE3 fk_pose = dynamics_->computeFK(left_frame_id_);
         auto fk_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
         fk_msg->header.stamp = get_node()->now();
-        fk_msg->header.frame_id = "world";
+        fk_msg->header.frame_id = "base_footprint";
         fk_msg->pose.position.x = fk_pose.translation()[0];
         fk_msg->pose.position.y = fk_pose.translation()[1];
         fk_msg->pose.position.z = fk_pose.translation()[2];
@@ -473,7 +482,7 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
         pinocchio::SE3 fk_pose = dynamics_->computeFK(right_frame_id_);
         auto fk_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
         fk_msg->header.stamp = get_node()->now();
-        fk_msg->header.frame_id = "world";
+        fk_msg->header.frame_id = "base_footprint";
         fk_msg->pose.position.x = fk_pose.translation()[0];
         fk_msg->pose.position.y = fk_pose.translation()[1];
         fk_msg->pose.position.z = fk_pose.translation()[2];
@@ -499,11 +508,12 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
   // Update dynamics state for IK computations
   dynamics_->updateState(q_, v_);
 
-  // Process left arm target (skip if left arm is homing)
+  // Process left arm target only when a new message arrives.
+  const uint64_t left_seq = left_target_seq_.load(std::memory_order_relaxed);
   auto left_msg = rt_left_target_.readFromRT();
-  if (!homing_left_ && left_msg && (*left_msg) && left_target_received_) {
+  if (!homing_left_ && left_msg && (*left_msg) && left_target_received_ &&
+      left_target_pending_ && left_seq != left_target_seq_consumed_) {
     const auto& pose = (*left_msg)->pose;
-    
     Eigen::Quaterniond quat(pose.orientation.w, pose.orientation.x,
                              pose.orientation.y, pose.orientation.z);
     Eigen::Vector3d trans(pose.position.x, pose.position.y, pose.position.z);
@@ -514,14 +524,11 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
 
     pinocchio::SE3 target_pose(quat.toRotationMatrix(), trans);
-    
     Eigen::VectorXd q_ik_result;
     bool ik_success = dynamics_->solveIK(
       left_frame_id_, target_pose, q_desired_,
       q_ik_result, ik_max_iter_, ik_eps_, ik_damping_, ik_dt_);
-    
     if (ik_success) {
-      // Only write back on convergence to prevent seed corruption
       for (size_t i = 0; i < joint_names_.size(); ++i) {
         if (joint_names_[i].find("left_") == 0) {
           int idx_v = joint_idx_v_[i];
@@ -530,6 +537,8 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
           }
         }
       }
+      left_target_seq_consumed_ = left_seq;
+      left_target_pending_ = false;
     } else {
       RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
                            "Left arm IK did not converge. Target: [%.3f, %.3f, %.3f]",
@@ -537,11 +546,11 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
   }
 
-  // Process right arm target (skip if right arm is homing)
+  const uint64_t right_seq = right_target_seq_.load(std::memory_order_relaxed);
   auto right_msg = rt_right_target_.readFromRT();
-  if (!homing_right_ && right_msg && (*right_msg) && right_target_received_) {
+  if (!homing_right_ && right_msg && (*right_msg) && right_target_received_ &&
+      right_target_pending_ && right_seq != right_target_seq_consumed_) {
     const auto& pose = (*right_msg)->pose;
-    
     Eigen::Quaterniond quat(pose.orientation.w, pose.orientation.x,
                              pose.orientation.y, pose.orientation.z);
     Eigen::Vector3d trans(pose.position.x, pose.position.y, pose.position.z);
@@ -552,12 +561,10 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     }
 
     pinocchio::SE3 target_pose(quat.toRotationMatrix(), trans);
-    
     Eigen::VectorXd q_ik_result;
     bool ik_success = dynamics_->solveIK(
       right_frame_id_, target_pose, q_desired_,
       q_ik_result, ik_max_iter_, ik_eps_, ik_damping_, ik_dt_);
-    
     if (ik_success) {
       for (size_t i = 0; i < joint_names_.size(); ++i) {
         if (joint_names_[i].find("right_") == 0) {
@@ -567,6 +574,8 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
           }
         }
       }
+      right_target_seq_consumed_ = right_seq;
+      right_target_pending_ = false;
     } else {
       RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 2000,
                            "Right arm IK did not converge. Target: [%.3f, %.3f, %.3f]",
@@ -654,14 +663,13 @@ controller_interface::return_type CartesianPositionControllerPlugin::update(
     feedback_msg->name = joint_names_;
     feedback_msg->position.resize(joint_names_.size());
     feedback_msg->velocity.resize(joint_names_.size());
-    feedback_msg->effort.resize(joint_names_.size());
+    feedback_msg->effort.resize(joint_names_.size(), 0.0);
     
     for (size_t i = 0; i < joint_names_.size(); ++i) {
       int idx_v = joint_idx_v_[i];
       if (idx_v >= 0) {
-        feedback_msg->position[i] = q_command_[idx_v];   // commanded position
-        feedback_msg->velocity[i] = q_[idx_v];           // actual position
-        feedback_msg->effort[i] = q_desired_[idx_v];     // IK target position
+        feedback_msg->position[i] = q_[idx_v];
+        feedback_msg->velocity[i] = v_[idx_v];
       }
     }
     

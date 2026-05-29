@@ -34,6 +34,13 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+MOTOR_LIMITS = {
+    'DM4310': (12.5, 50.0, 10.0),
+    'DM4340': (12.5, 20.0, 28.0),
+    'DM4340P': (12.5, 20.0, 28.0),
+    'DM8009': (12.5, 45.0, 54.0),
+}
+
 import yaml
 
 import rclpy
@@ -57,6 +64,8 @@ def parse_args(argv=None):
     p.add_argument('--max-spread', type=float, default=0.02,
                    help='Reject samples if peak-to-peak spread exceeds this (rad). '
                         'Default 0.02 rad ~= 1.1 deg. Hold the robot still.')
+    p.add_argument('--motor-type-map', type=Path, default=None,
+                   help='Optional YAML with per-slot motor_type entries.')
     return p.parse_args(argv)
 
 
@@ -82,11 +91,13 @@ class RawCollector(Node):
         self._latest[ch] = msg
 
     def gather(self, channels: List[int], samples: int,
-               timeout: float) -> Tuple[Dict[Tuple[int, int], List[float]], Dict[int, int]]:
-        """Spin until each channel produced `samples` distinct frames or the
-        timeout elapses. Returns (per_motor_raws, per_channel_count)."""
+               timeout: float,
+               limits: Dict[Tuple[int, int], Tuple[float, float, float]]) -> Tuple[Dict[Tuple[int, int], List[float]], Dict[int, int], Dict[Tuple[int, int], int], Dict[Tuple[int, int], int]]:
+        """Spin until enough valid frames are collected or timeout elapses."""
         per_motor: Dict[Tuple[int, int], List[float]] = {}
         per_chan_count: Dict[int, int] = {ch: 0 for ch in channels}
+        skipped_err: Dict[Tuple[int, int], int] = {}
+        skipped_sentinel: Dict[Tuple[int, int], int] = {}
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.05)
@@ -100,10 +111,22 @@ class RawCollector(Node):
                 self._last_id[ch] = key
                 per_chan_count[ch] += 1
                 for slot, m in enumerate(msg.motors):
-                    per_motor.setdefault((ch, slot), []).append(float(m.position))
-            if all(per_chan_count[ch] >= samples for ch in channels):
-                break
-        return per_motor, per_chan_count
+                    motor_key = (ch, slot)
+                    if motor_key not in limits:
+                        continue
+                    pos_max, vel_max, tor_max = limits[motor_key]
+                    if int(m.err) != 1:
+                        skipped_err[motor_key] = skipped_err.get(motor_key, 0) + 1
+                        continue
+                    is_sentinel = (
+                        abs(float(m.position) + pos_max) < 1e-3 and
+                        abs(float(m.velocity) + vel_max) < 1e-3 and
+                        abs(float(m.torque) + tor_max) < 1e-3)
+                    if is_sentinel:
+                        skipped_sentinel[motor_key] = skipped_sentinel.get(motor_key, 0) + 1
+                        continue
+                    per_motor.setdefault(motor_key, []).append(float(m.position))
+        return per_motor, per_chan_count, skipped_err, skipped_sentinel
 
 
 def main():
@@ -122,15 +145,28 @@ def main():
 
     default_ch = int(data.get('channel', 1))
     channels = sorted({int(e.get('channel', default_ch)) for e in data['offsets']})
+    motor_type_map = {}
+    if args.motor_type_map and args.motor_type_map.exists():
+        with args.motor_type_map.open('r') as f:
+            motor_type_map = yaml.safe_load(f) or {}
+
+    limits: Dict[Tuple[int, int], Tuple[float, float, float]] = {}
+    for e in data['offsets']:
+        ch = int(e.get('channel', default_ch))
+        slot = int(e['slot'])
+        motor_type = e.get('motor_type') or motor_type_map.get(f'{ch}.{slot}') or motor_type_map.get(f'{ch}:{slot}')
+        if motor_type not in MOTOR_LIMITS:
+            print(f"ERROR: missing/unknown motor_type for ch{ch} slot{slot}; add motor_type in YAML or --motor-type-map", file=sys.stderr)
+            sys.exit(1)
+        limits[(ch, slot)] = MOTOR_LIMITS[motor_type]
 
     rclpy.init()
     try:
         node = RawCollector(channels)
         node.get_logger().info(
-            f'Gathering {args.samples} samples per channel, timeout {args.timeout:.1f}s. '
+            f'Gathering {args.samples} valid samples per motor, timeout {args.timeout:.1f}s. '
             'Hold the robot at URDF zero pose, perfectly still...')
-        per_motor, per_chan = node.gather(channels, args.samples, args.timeout)
-
+        per_motor, per_chan, skipped_err, skipped_sentinel = node.gather(channels, args.samples, args.timeout, limits)
         for ch in channels:
             if per_chan[ch] < args.samples:
                 node.get_logger().warning(
@@ -143,9 +179,10 @@ def main():
     # Build summary table.
     print()
     print(f'{"name":<14} | {"ch":>2} | {"slot":>4} | '
-          f'{"samples":>7} | {"raw_now":>10} | {"spread":>7} | '
-          f'{"old_off":>10} | {"new_off":>10} | {"delta":>10}')
-    print('-' * 105)
+          f'{"valid":>5} | {"raw_now":>10} | {"spread":>7} | '
+          f'{"old_off":>10} | {"new_off":>10} | {"delta":>10} | '
+          f'{"err":>5} | {"sent":>5}')
+    print('-' * 125)
 
     n_changed = 0
     n_skipped = 0
@@ -157,18 +194,22 @@ def main():
         old = float(e.get('zero_offset', 0.0))
         sign = float(e.get('axis_sign', 1.0))
         raws = per_motor.get((ch, slot), [])
+        err_skips = skipped_err.get((ch, slot), 0)
+        sent_skips = skipped_sentinel.get((ch, slot), 0)
         if not raws:
             print(f'{name:<14} | {ch:>2} | {slot:>4} | '
-                  f'{0:>7} | {"NO DATA":>10} | {"--":>7} | '
-                  f'{old:+10.4f} | {"--":>10} | {"--":>10}')
+                  f'{0:>5} | {"NO DATA":>10} | {"--":>7} | '
+                  f'{old:+10.4f} | {"--":>10} | {"--":>10} | '
+                  f'{err_skips:>5} | {sent_skips:>5}')
             n_nodata += 1
             continue
         spread = max(raws) - min(raws)
         avg = sum(raws) / len(raws)
         if spread > args.max_spread:
             print(f'{name:<14} | {ch:>2} | {slot:>4} | '
-                  f'{len(raws):>7} | {avg:+10.4f} | {spread:>7.4f} | '
-                  f'{old:+10.4f} | {"SKIP":>10} | {"--":>10}  (jitter > {args.max_spread})')
+                  f'{len(raws):>5} | {avg:+10.4f} | {spread:>7.4f} | '
+                  f'{old:+10.4f} | {"SKIP":>10} | {"--":>10} | '
+                  f'{err_skips:>5} | {sent_skips:>5}  (jitter > {args.max_spread})')
             n_skipped += 1
             continue
         # zero_offset = raw_at_zero (regardless of axis_sign).
@@ -182,8 +223,9 @@ def main():
         e['sample_count'] = int(len(raws))
         e['sample_spread'] = float(spread)
         print(f'{name:<14} | {ch:>2} | {slot:>4} | '
-              f'{len(raws):>7} | {avg:+10.4f} | {spread:>7.4f} | '
-              f'{old:+10.4f} | {new:+10.4f} | {delta:+10.4f}')
+              f'{len(raws):>5} | {avg:+10.4f} | {spread:>7.4f} | '
+              f'{old:+10.4f} | {new:+10.4f} | {delta:+10.4f} | '
+              f'{err_skips:>5} | {sent_skips:>5}')
         n_changed += 1
 
     # Update top-level metadata.
@@ -196,6 +238,8 @@ def main():
 
     print()
     print(f'  changed: {n_changed}    skipped (jitter): {n_skipped}    no-data: {n_nodata}')
+    if n_nodata > 0 or n_skipped > 0:
+        print('WARNING: some joints lacked valid samples or were rejected; inspect the table above.')
     if args.apply:
         if n_changed == 0:
             print('Nothing to write.')

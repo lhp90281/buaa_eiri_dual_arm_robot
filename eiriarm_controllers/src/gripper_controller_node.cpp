@@ -182,7 +182,7 @@ struct Gripper
   // this is a clean signal that "the arm on my channel is up".
   // Updated on every /motor/chN/state frame.
   int  arm_armed_count = 0;        // 0..7
-  bool arm_was_ever_ready = false; // latches true once arm_armed_count hit 7
+  bool arm_was_ever_ready = false; // latched only while the arm remains ready
 };
 
 class GripperController : public rclcpp::Node
@@ -459,12 +459,16 @@ private:
       if (msg.motors[i].err == DM_ERR_ENABLED) ++armed;
     }
     g.arm_armed_count = armed;
-    if (armed == 7 && !g.arm_was_ever_ready) {
+    if (armed == 7) {
+      if (!g.arm_was_ever_ready) {
+        RCLCPP_INFO(get_logger(),
+          "%s gripper: arm on ch%u reports all 7 joints ENABLED -> "
+          "gating released, gripper may now ENABLE itself.",
+          g.side.c_str(), static_cast<unsigned>(g.channel));
+      }
       g.arm_was_ever_ready = true;
-      RCLCPP_INFO(get_logger(),
-        "%s gripper: arm on ch%u reports all 7 joints ENABLED -> "
-        "gating released, gripper may now ENABLE itself.",
-        g.side.c_str(), static_cast<unsigned>(g.channel));
+    } else if (armed == 0) {
+      g.arm_was_ever_ready = false;
     }
 
     const double now_pos = static_cast<double>(ms.position);
@@ -651,7 +655,7 @@ private:
       // (intermittent left_joint_3/right_joint_5 not enabling). We therefore
       // hold off ALL gripper publishing until the arm reports all 7 of its
       // joints ENABLED on this channel.
-      if (!g.arm_was_ever_ready) {
+      if (g.arm_armed_count != 7) {
         // Don't even publish a state-tracking heartbeat; the gripper motor
         // is still disabled, no watchdog to satisfy yet.
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
