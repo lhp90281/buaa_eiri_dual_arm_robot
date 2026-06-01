@@ -1,9 +1,0 @@
-mujoco_simulator:
-  # Position-control variant: arm joints use MuJoCo position actuators
-  # d->ctrl[i] is interpreted as desired position (not torque)
-  modelFile: "/home/arm/ros2_ws/src/description/dual_arm_support/mjcf/dual_arm_robot_position.xml"
-  jointCommandsTopic: "/ctrl/command"
-  jointGainsTopic: "/ctrl/gains"
-  unPauseService: "/unpause_physics"
-  initPauseFlag: true
-  modelTableFlag: true

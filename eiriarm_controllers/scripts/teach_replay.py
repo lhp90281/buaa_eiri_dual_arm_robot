@@ -8,14 +8,13 @@ Workflow:
                   rate and saves the trajectory to a YAML file. Stop with
                   Ctrl-C (or the --max-duration timeout).
   3. `replay` --> by default, atomically activates
-                  joint_position_controller and deactivates
-                  gravity_compensation_controller via
-                  /controller_manager/switch_controller, then publishes
-                  a single JointTrajectory on /joint_position_command;
-                  the controller's update() linearly interpolates
-                  between samples and tracks it. On exit (clean or
-                  Ctrl-C) the switch is reversed, keeping gravity comp
-                  active so the arm always ends in teach mode again.
+                  joint_position_controller, keeps
+                  gravity_compensation_controller active, deactivates
+                  cartesian_position_controller if needed, then streams
+                  JointTrajectory setpoints on /joint_position_command.
+                  On exit (clean or Ctrl-C), joint_position_controller is
+                  deactivated if this helper activated it, leaving the arm
+                  in gravity-comp teach mode again.
 
 Examples:
     # record at 50 Hz, all joints from /joint_states, until Ctrl-C
@@ -657,9 +656,11 @@ def main() -> int:
     p_rep.add_argument('--auto-switch', dest='auto_switch',
                        action='store_true', default=True,
                        help='before replay, activate '
-                            'joint_position_controller and deactivate '
-                            'gravity_compensation_controller; reverse on '
-                            'exit (default ON)')
+                            'joint_position_controller, keep '
+                            'gravity_compensation_controller active, and '
+                            'deactivate cartesian_position_controller if '
+                            'active; restore teach mode on exit '
+                            '(default ON)')
     p_rep.add_argument('--no-auto-switch', dest='auto_switch',
                        action='store_false',
                        help='do not touch the controller manager '

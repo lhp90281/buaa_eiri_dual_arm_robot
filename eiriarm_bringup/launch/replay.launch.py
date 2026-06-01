@@ -5,8 +5,8 @@ Replay a recorded drag-teach trajectory through joint_position_controller.
 Thin launch wrapper around `teach_replay replay` in eiriarm_controllers.
 By default the underlying script auto-switches into
 joint_position_controller before streaming and back to
-gravity_compensation_controller on exit, so this launch is
-fire-and-forget after `real_robot.launch.py`.
+gravity-comp teach mode on exit, so this launch is fire-and-forget after
+`real_robot.launch.py`.
 
 Usage
 -----
@@ -32,9 +32,10 @@ Arguments
   publish_rate   Setpoint streaming rate, Hz (default 50).
   command_topic  Trajectory topic (default /joint_position_command).
   auto_switch    true|false (default true). When true, the script
-                 activates joint_position_controller and deactivates
-                 gravity_compensation_controller before replay, then
-                 reverses on exit. Set false to manage controllers by
+                 activates joint_position_controller, keeps
+                 gravity_compensation_controller active, deactivates
+                 cartesian_position_controller if active, then restores
+                 teach mode on exit. Set false to manage controllers by
                  hand.
 """
 
@@ -120,9 +121,10 @@ def generate_launch_description():
             default_value='true',
             description=(
                 'When true (default), activate joint_position_controller '
-                'and deactivate gravity_compensation_controller before '
-                'replay, then reverse on exit. Set false to manage '
-                'controllers by hand.'
+                'and keep gravity_compensation_controller active before '
+                'replay, deactivating cartesian_position_controller if '
+                'needed, then restore teach mode on exit. Set false to '
+                'manage controllers by hand.'
             ),
             choices=['true', 'false'],
         ),
