@@ -174,6 +174,7 @@ def _real_launch(controller_type: str):
                 'controller': _real_controller_arg(controller_type),
                 'gripper': LaunchConfiguration('enable_gripper'),
                 'offsets_yaml': LaunchConfiguration('offsets_yaml'),
+                'friction_model_yaml': LaunchConfiguration('friction_model_yaml'),
             }.items(),
         )
     ]
@@ -208,8 +209,20 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'offsets_yaml',
-            default_value='/home/arm/ros2_ws/joint_offsets_dual.yaml',
-            description='Absolute path to the 14-joint zero/sign calibration YAML for real hardware',
+            default_value='joint_offsets_dual.yaml',
+            description=(
+                'Path to the 14-joint zero/sign calibration YAML for real '
+                'hardware. Relative paths are resolved from the launch '
+                'working directory.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'friction_model_yaml',
+            default_value='friction_model.yaml',
+            description=(
+                'Path to the friction model YAML for real hardware. '
+                'Relative paths are resolved from the launch working directory.'
+            ),
         ),
         DeclareLaunchArgument(
             'controller_type',

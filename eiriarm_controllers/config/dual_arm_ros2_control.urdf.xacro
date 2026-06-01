@@ -20,7 +20,7 @@
 
   Usage (from launch):
     xacro $(find eiriarm_controllers)/config/dual_arm_ros2_control.urdf.xacro \
-          offsets_yaml:=/home/arm/ros2_ws/joint_offsets_dual.yaml \
+          offsets_yaml:=joint_offsets_dual.yaml \
           arms:=dual          # or 'left' / 'right' to expose only one arm
 
   The 'arms' arg only affects which joints appear in the <ros2_control> block.

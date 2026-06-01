@@ -46,7 +46,7 @@ Common invocations
 
   # Custom calibration file:
   ros2 launch eiriarm_bringup real_robot.launch.py \
-       offsets_yaml:=/path/to/joint_offsets_dual.yaml
+       offsets_yaml:=joint_offsets_dual.yaml
 
 Argument summary
 ----------------
@@ -55,7 +55,11 @@ Argument summary
   controller     gravity | joint_position | cartesian_position
                  (cartesian_position requires arms=dual).
   gripper        true | false   (start gripper_controller_node).
-  offsets_yaml   absolute path to the 14-joint zero/sign calibration YAML.
+  offsets_yaml   path to the 14-joint zero/sign calibration YAML.
+                 Relative paths are resolved from the launch working directory.
+  friction_model_yaml
+                 path to the friction model YAML. Relative paths are resolved
+                 from the launch working directory.
   use_gui        true | false   (start MuJoCo mirror/target-editor panel).
 """
 
@@ -93,8 +97,19 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'offsets_yaml',
-            default_value='/home/arm/ros2_ws/joint_offsets_dual.yaml',
-            description='Absolute path to the 14-joint zero/sign calibration YAML',
+            default_value='joint_offsets_dual.yaml',
+            description=(
+                'Path to the 14-joint zero/sign calibration YAML. Relative '
+                'paths are resolved from the launch working directory.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'friction_model_yaml',
+            default_value='friction_model.yaml',
+            description=(
+                'Path to the friction model YAML. Relative paths are '
+                'resolved from the launch working directory.'
+            ),
         ),
         DeclareLaunchArgument(
             'use_gui',
@@ -120,6 +135,7 @@ def generate_launch_description():
             'controller':   LaunchConfiguration('controller'),
             'gripper':      LaunchConfiguration('gripper'),
             'offsets_yaml': LaunchConfiguration('offsets_yaml'),
+            'friction_model_yaml': LaunchConfiguration('friction_model_yaml'),
         }.items(),
     )
 

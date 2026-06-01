@@ -47,7 +47,7 @@ Usage:
 
   # custom calibration file:
   ros2 launch eiriarm_controllers dual_arm.launch.py \
-       offsets_yaml:=/home/arm/ros2_ws/joint_offsets_dual.yaml
+       offsets_yaml:=joint_offsets_dual.yaml
 
   # don't start the gripper controller (e.g. when you've swapped grippers):
   ros2 launch eiriarm_controllers dual_arm.launch.py gripper:=false
@@ -92,18 +92,29 @@ _GC_JOINT_ARRAY_KEYS = ('joints', 'motor_types', 'gravity_gains', 'friction_gain
 # Same idea for joint_position_controller.
 _JP_JOINT_ARRAY_KEYS = ('joints', 'kp_gains', 'kd_gains')
 
-def _slice_controllers_yaml(src_path: str, arms: str) -> str:
-    """Read the dual-arm controllers yaml and slice the per-joint arrays for
-    the selected arms. For 'dual', the file is returned unchanged. For
-    'left' / 'right', a sliced copy is written to /tmp and that path is
-    returned.
+def _resolve_user_path(path: str) -> str:
+    """Resolve user-supplied runtime asset paths.
+
+    Absolute paths pass through. '~' is expanded. Relative paths are resolved
+    from the directory where `ros2 launch ...` was invoked, which keeps the
+    common `cd ~/ros2_ws && ros2 launch ...` workflow portable across users.
+    """
+    path = path.strip()
+    if not path:
+        return ''
+    path = os.path.expanduser(path)
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(path)
+
+
+def _controllers_yaml(src_path: str, arms: str, friction_model_yaml: str) -> str:
+    """Read the dual-arm controllers yaml, apply runtime path overrides, and
+    slice the per-joint arrays for the selected arms when needed.
 
     Also drops cartesian_position_controller in single-arm mode since the
     controller is a dual-arm coordinator.
     """
-    if arms == 'dual':
-        return src_path
-
     if arms not in _ARM_SLICE:
         raise ValueError(
             f"arms must be 'left', 'right' or 'dual'; got {arms!r}")
@@ -111,28 +122,32 @@ def _slice_controllers_yaml(src_path: str, arms: str) -> str:
     with open(src_path, 'r') as f:
         cfg: dict[str, Any] = yaml.safe_load(f)
 
-    sl = _ARM_SLICE[arms]
-
-    # Slice gravity_compensation_controller per-joint arrays.
     gc = cfg.get('gravity_compensation_controller', {}).get('ros__parameters', {})
-    for key in _GC_JOINT_ARRAY_KEYS:
-        val = gc.get(key)
-        if isinstance(val, list) and len(val) == 14:
-            gc[key] = val[sl]
+    if friction_model_yaml:
+        gc['friction_model_yaml'] = friction_model_yaml
 
-    # Slice joint_position_controller per-joint arrays.
-    jp = cfg.get('joint_position_controller', {}).get('ros__parameters', {})
-    for key in _JP_JOINT_ARRAY_KEYS:
-        val = jp.get(key)
-        if isinstance(val, list) and len(val) == 14:
-            jp[key] = val[sl]
+    if arms != 'dual':
+        sl = _ARM_SLICE[arms]
 
-    # cartesian_position_controller is a dual-arm coordinator; drop it in
-    # single-arm mode.
-    cfg.pop('cartesian_position_controller', None)
+        # Slice gravity_compensation_controller per-joint arrays.
+        for key in _GC_JOINT_ARRAY_KEYS:
+            val = gc.get(key)
+            if isinstance(val, list) and len(val) == 14:
+                gc[key] = val[sl]
+
+        # Slice joint_position_controller per-joint arrays.
+        jp = cfg.get('joint_position_controller', {}).get('ros__parameters', {})
+        for key in _JP_JOINT_ARRAY_KEYS:
+            val = jp.get(key)
+            if isinstance(val, list) and len(val) == 14:
+                jp[key] = val[sl]
+
+        # cartesian_position_controller is a dual-arm coordinator; drop it in
+        # single-arm mode.
+        cfg.pop('cartesian_position_controller', None)
 
     out_path = os.path.join(
-        tempfile.gettempdir(), f'dual_arm_controllers_{arms}.yaml')
+        tempfile.gettempdir(), f'dual_arm_controllers_{arms}_{os.getpid()}.yaml')
     with open(out_path, 'w') as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
     return out_path
@@ -157,6 +172,10 @@ def launch_setup(context, *args, **kwargs):
             f"The cartesian_position_controller is a dual-arm coordinator.")
 
     enable_gripper   = LaunchConfiguration('gripper').perform(context).lower() == 'true'
+    offsets_yaml = _resolve_user_path(
+        LaunchConfiguration('offsets_yaml').perform(context))
+    friction_model_yaml = _resolve_user_path(
+        LaunchConfiguration('friction_model_yaml').perform(context))
 
     pkg_eiriarm = FindPackageShare('eiriarm_controllers')
 
@@ -168,13 +187,13 @@ def launch_setup(context, *args, **kwargs):
     src_controllers_yaml = os.path.join(
         FindPackageShare('eiriarm_controllers').perform(context),
         'config', 'dual_arm_controllers.yaml')
-    controllers_yaml = _slice_controllers_yaml(src_controllers_yaml, arms)
+    controllers_yaml = _controllers_yaml(src_controllers_yaml, arms, friction_model_yaml)
 
     robot_description = {
         'robot_description': ParameterValue(
             Command([
                 'xacro ', xacro_path,
-                ' offsets_yaml:=', LaunchConfiguration('offsets_yaml'),
+                ' offsets_yaml:=', offsets_yaml,
                 ' arms:=', arms,
             ]),
             value_type=str,
@@ -267,6 +286,8 @@ def launch_setup(context, *args, **kwargs):
             FindPackageShare('eiriarm_controllers').perform(context),
             'config', 'gripper_controller.yaml')
         gripper_params = [gripper_yaml]
+        if friction_model_yaml:
+            gripper_params.append({'friction_model_yaml': friction_model_yaml})
         # Disable the off channel automatically in single-arm mode so we don't
         # spam /motor/ch{2,1}/cmd for a gripper that isn't physically wired.
         if arms == 'left':
@@ -295,8 +316,19 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'offsets_yaml',
-            default_value='/home/arm/ros2_ws/joint_offsets_dual.yaml',
-            description='Absolute path to the 14-joint zero/sign calibration YAML',
+            default_value='joint_offsets_dual.yaml',
+            description=(
+                'Path to the 14-joint zero/sign calibration YAML. Relative '
+                'paths are resolved from the launch working directory.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'friction_model_yaml',
+            default_value='friction_model.yaml',
+            description=(
+                'Path to the friction model YAML. Relative paths are '
+                'resolved from the launch working directory.'
+            ),
         ),
         DeclareLaunchArgument(
             'controller',

@@ -32,7 +32,6 @@ ros2 launch eiriarm_controllers dual_arm.launch.py
 
 # 回零、录制、回放也推荐通过 bringup 封装
 ros2 launch eiriarm_bringup go_home.launch.py
-ros2 launch eiriarm_bringup record.launch.py output:=/home/arm/ros2_ws/recordings/demo.yaml
-ros2 launch eiriarm_bringup replay.launch.py input:=/home/arm/ros2_ws/recordings/demo.yaml
+ros2 launch eiriarm_bringup record.launch.py output:=recordings/demo.yaml
+ros2 launch eiriarm_bringup replay.launch.py input:=recordings/demo.yaml
 ```
-

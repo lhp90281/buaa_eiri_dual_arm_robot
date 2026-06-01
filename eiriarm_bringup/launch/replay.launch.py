@@ -60,7 +60,7 @@ def _build_nodes(context, *args, **kwargs):
     if not inp:
         raise RuntimeError(
             "replay.launch.py: 'input' is required, e.g. "
-            "input:=/home/arm/ros2_ws/recordings/left_wave.yaml")
+            "input:=recordings/left_wave.yaml")
 
     argv = [
         'replay', inp,

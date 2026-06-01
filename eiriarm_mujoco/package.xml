@@ -28,6 +28,7 @@
   <depend>robot_state_publisher</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
+  <depend>ament_index_cpp</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

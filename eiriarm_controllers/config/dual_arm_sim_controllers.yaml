@@ -85,7 +85,7 @@ gravity_compensation_controller:
     # feed-forward here makes the simulated robot diverge from its own
     # physics model.
     friction_compensation_enabled: false
-    friction_model_yaml: "/home/arm/ros2_ws/friction_model.yaml"
+    friction_model_yaml: "friction_model.yaml"
     # motor_types must be in the same order as 'joints' above.
     motor_types:
       - DM8009     # left_joint_0

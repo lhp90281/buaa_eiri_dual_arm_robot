@@ -55,7 +55,7 @@ def _build_nodes(context, *args, **kwargs):
         # in red and exit non-zero rather than starting an unusable node.
         raise RuntimeError(
             "record.launch.py: 'output' is required, e.g. "
-            "output:=/home/arm/ros2_ws/recordings/left_wave.yaml")
+            "output:=recordings/left_wave.yaml")
 
     argv = [
         'record',

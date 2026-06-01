@@ -109,7 +109,8 @@ ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=false
 | `arms` | `dual` | `left`、`right`、`dual` |
 | `controller` | `gravity` | `gravity`、`joint_position`、`cartesian_position` |
 | `gripper` | `true` | 是否启动夹爪控制节点 |
-| `offsets_yaml` | `/home/arm/ros2_ws/joint_offsets_dual.yaml` | 关节零位和方向标定 |
+| `offsets_yaml` | `joint_offsets_dual.yaml` | 关节零位和方向标定；相对路径按启动 launch 的当前目录解析 |
+| `friction_model_yaml` | `friction_model.yaml` | 摩擦模型；相对路径按启动 launch 的当前目录解析 |
 | `use_gui` | `false` | 是否同时启动 MuJoCo 真机面板 |
 
 示例：
@@ -345,7 +346,7 @@ ros2 launch eiriarm_bringup go_home.launch.py \
 录制前建议保持默认重力补偿模式，不要让关节位置控制器 active，否则 PD 会和手拖对抗。
 
 ```bash
-ros2 launch eiriarm_bringup record.launch.py output:=/home/arm/ros2_ws/recordings/demo.yaml
+ros2 launch eiriarm_bringup record.launch.py output:=recordings/demo.yaml
 ```
 
 录制时拖动机械臂，按 `q` 或 `Ctrl+C` 停止并写文件。
@@ -354,7 +355,7 @@ ros2 launch eiriarm_bringup record.launch.py output:=/home/arm/ros2_ws/recording
 
 ```bash
 ros2 launch eiriarm_bringup record.launch.py \
-  output:=/home/arm/ros2_ws/recordings/left_demo.yaml \
+  output:=recordings/left_demo.yaml \
   joints:='left_joint_0 left_joint_1 left_joint_2 left_joint_3 left_joint_4 left_joint_5 left_joint_6'
 ```
 
@@ -370,14 +371,14 @@ ros2 launch eiriarm_bringup record.launch.py \
 ### 回放
 
 ```bash
-ros2 launch eiriarm_bringup replay.launch.py input:=/home/arm/ros2_ws/recordings/demo.yaml
+ros2 launch eiriarm_bringup replay.launch.py input:=recordings/demo.yaml
 ```
 
 半速回放：
 
 ```bash
 ros2 launch eiriarm_bringup replay.launch.py \
-  input:=/home/arm/ros2_ws/recordings/demo.yaml \
+  input:=recordings/demo.yaml \
   time_scale:=0.5
 ```
 
@@ -385,7 +386,7 @@ ros2 launch eiriarm_bringup replay.launch.py \
 
 ```bash
 ros2 launch eiriarm_bringup replay.launch.py \
-  input:=/home/arm/ros2_ws/recordings/demo.yaml \
+  input:=recordings/demo.yaml \
   ramp_in:=4.0
 ```
 
@@ -410,9 +411,9 @@ ros2 launch eiriarm_bringup bridge.launch.py
 ros2 launch eiriarm_bringup real_robot.launch.py
 
 # 终端 3
-ros2 launch eiriarm_bringup record.launch.py output:=/home/arm/ros2_ws/recordings/demo.yaml
+ros2 launch eiriarm_bringup record.launch.py output:=recordings/demo.yaml
 ros2 launch eiriarm_bringup go_home.launch.py
-ros2 launch eiriarm_bringup replay.launch.py input:=/home/arm/ros2_ws/recordings/demo.yaml
+ros2 launch eiriarm_bringup replay.launch.py input:=recordings/demo.yaml
 ```
 
 ---
@@ -589,10 +590,10 @@ src/eiriarm_controllers/config/gripper_controller.yaml
 
 ## 11. 关节零点标定
 
-零点标定输出 `joint_offsets_*.yaml`。真机默认读取：
+零点标定输出 `joint_offsets_*.yaml`。真机默认读取启动目录下的：
 
 ```bash
-/home/arm/ros2_ws/joint_offsets_dual.yaml
+joint_offsets_dual.yaml
 ```
 
 ### hard-stop 标定
@@ -677,10 +678,10 @@ ros2 topic echo /joint_states
 
 ## 12. 摩擦辨识与重力补偿调参（不建议使用，需要拆除电机独立标定，不能整臂标定）
 
-摩擦模型文件：
+摩擦模型文件默认读取启动目录下的：
 
 ```bash
-/home/arm/ros2_ws/friction_model.yaml
+friction_model.yaml
 ```
 
 摩擦辨识示例：

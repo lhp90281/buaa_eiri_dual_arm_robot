@@ -34,6 +34,7 @@ find_package(kdl_parser REQUIRED)
 find_package(robot_state_publisher REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 include_directories(include)
 
@@ -78,6 +79,7 @@ ament_target_dependencies(simulate
   "robot_state_publisher"
   "tf2"
   "tf2_ros"
+  "ament_index_cpp"
 )
 
 # ==========================================================

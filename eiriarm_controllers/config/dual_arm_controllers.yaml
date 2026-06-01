@@ -88,7 +88,9 @@ gravity_compensation_controller:
     # Reuses friction_model.yaml identified on the small arm; same motor
     # families, parameters generalize across instances of the same family.
     friction_compensation_enabled: true
-    friction_model_yaml: "/home/arm/ros2_ws/friction_model.yaml"
+    # Runtime launch files override this with an absolute path resolved from
+    # friction_model_yaml:=...; keep the checked-in default portable.
+    friction_model_yaml: "friction_model.yaml"
     # motor_types must be in the same order as 'joints' above.
     motor_types:
       - DM8009     # left_joint_0
@@ -328,5 +330,4 @@ cartesian_position_controller:
 
 joint_state_broadcaster:
   ros__parameters: {}
-
 

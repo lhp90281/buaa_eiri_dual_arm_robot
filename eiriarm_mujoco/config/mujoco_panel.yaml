@@ -1,7 +1,7 @@
 mujoco_simulator:
   # Display/target-editor panel for the real robot. Physics is forced paused
   # in this mode; the MuJoCo model is used as an interactive visualization.
-  modelFile: "/home/arm/ros2_ws/src/description/dual_arm_support/mjcf/dual_arm_robot.xml"
+  modelFile: "package://dual_arm_support/mjcf/dual_arm_robot.xml"
 
   # Kept for compatibility with the normal simulator path. They are not used
   # when panelMode is mirror_real or target_editor.

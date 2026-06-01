@@ -24,6 +24,7 @@
 #include <new>
 #include <string>
 #include <thread>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include "rclcpp/rclcpp.hpp"
 
 #include <mujoco/mujoco.h>
@@ -48,6 +49,21 @@ namespace mju = ::mujoco::sample_util;
 const double syncMisalign = 0.1;        // maximum mis-alignment before re-sync (simulation seconds)
 const double simRefreshFraction = 0.7;  // fraction of refresh available for simulation
 const int kErrorLength = 1024;          // load error string length
+
+std::string ResolveModelPath(const std::string& path) {
+  constexpr const char* kPackagePrefix = "package://";
+  if (path.rfind(kPackagePrefix, 0) == 0) {
+    const std::string rest = path.substr(std::strlen(kPackagePrefix));
+    const auto slash = rest.find('/');
+    if (slash == std::string::npos) {
+      return path;
+    }
+    const std::string package_name = rest.substr(0, slash);
+    const std::string relative_path = rest.substr(slash + 1);
+    return ament_index_cpp::get_package_share_directory(package_name) + "/" + relative_path;
+  }
+  return path;
+}
 
 // model and data
 mjModel* m = nullptr;
@@ -453,6 +469,10 @@ int main(int argc, char** argv) {
 
   // 读取mjcf路径
   std::string mjcf_path = config["modelFile"].as<std::string>();
+  if (const char* model_env = std::getenv("EIRIARM_MUJOCO_MODEL_FILE")) {
+    mjcf_path = model_env;
+  }
+  mjcf_path = ResolveModelPath(mjcf_path);
   
   // Check if file exists, if not try to resolve it (simple check)
   if (mjcf_path.empty()) {

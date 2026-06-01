@@ -23,7 +23,9 @@ gripper_controller:
     # Friction compensation (DM4310 row of friction_model.yaml). Off by
     # default; turn on with the launch arg (or override here).
     friction_compensation_enabled: true
-    friction_model_yaml: "/home/arm/ros2_ws/friction_model.yaml"
+    # Runtime launch files override this with an absolute path resolved from
+    # friction_model_yaml:=...; keep the checked-in default portable.
+    friction_model_yaml: "friction_model.yaml"
     friction_gain: 0.5                    # scale of (coulomb + viscous*v) FF
     friction_deadband: 0.05               # rad/s; below this, friction_ff = 0
 
