@@ -26,8 +26,8 @@ Brings up:
      every mode so the helper launches `go_home.launch.py` and
      `replay.launch.py` can switch into it without the operator
      touching `ros2 control switch_controllers`.
-  6. cartesian_position_controller (active, ONLY when
-     controller:=cartesian_position; requires arms:=dual).
+  6. cartesian_position_controller (LOADED for dual-arm mode; ACTIVE iff
+     controller:=cartesian_position, otherwise inactive).
   7. gripper_controller standalone node (talks to ch1.id7 / ch2.id7
      directly, auto-calibrates open->close on startup; toggle with
      gripper:=true|false).
@@ -231,9 +231,9 @@ def launch_setup(context, *args, **kwargs):
     #       scripts (`go_home`, teach `replay`) can switch into it via
     #       /controller_manager/switch_controller without the operator
     #       having to load it by hand.
-    #   * cartesian_position_controller: only loaded when explicitly
-    #       selected (it is a dual-arm coordinator, requires arms==dual,
-    #       and is not used by any of the bringup helper scripts).
+    #   * cartesian_position_controller: loaded in dual-arm mode. Active
+    #       iff controller==cartesian_position, otherwise inactive, so the
+    #       MuJoCo panel can switch into it without re-launching.
     jp_args = ['joint_position_controller', '-c', '/controller_manager']
     if controller != 'joint_position':
         jp_args.append('--inactive')
@@ -244,15 +244,18 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     ))
 
-    if controller == 'cartesian_position':
-        # Pre-condition checked above (arms == 'dual').
+    if arms == 'dual':
+        cartesian_args = ['cartesian_position_controller', '-c', '/controller_manager']
+        if controller != 'cartesian_position':
+            cartesian_args.append('--inactive')
         nodes.append(Node(
             package='controller_manager',
             executable='spawner',
-            arguments=['cartesian_position_controller', '-c', '/controller_manager'],
+            arguments=cartesian_args,
             output='screen',
         ))
-    # else controller in {gravity, joint_position}: nothing else to spawn.
+    # else single-arm mode: cartesian_position_controller was removed from
+    # the sliced yaml because it is a dual-arm coordinator.
 
     # Gripper controller: standalone node OUTSIDE ros2_control. Talks directly
     # to /motor/ch1/cmd (left, slot 7) and /motor/ch2/cmd (right, slot 7),

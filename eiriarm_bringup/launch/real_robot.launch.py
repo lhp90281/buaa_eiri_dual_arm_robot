@@ -28,6 +28,13 @@ Common invocations
   # Both arms with joint-space PD tracking active immediately:
   ros2 launch eiriarm_bringup real_robot.launch.py controller:=joint_position
 
+  # Joint-space PD tracking with the MuJoCo real-robot panel:
+  ros2 launch eiriarm_bringup real_robot.launch.py \
+       controller:=joint_position use_gui:=true
+
+  # Gravity-comp teach mode with the MuJoCo mirror/control panel:
+  ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
+
   # Both arms with the cartesian PD coordinator:
   ros2 launch eiriarm_bringup real_robot.launch.py controller:=cartesian_position
 
@@ -49,10 +56,12 @@ Argument summary
                  (cartesian_position requires arms=dual).
   gripper        true | false   (start gripper_controller_node).
   offsets_yaml   absolute path to the 14-joint zero/sign calibration YAML.
+  use_gui        true | false   (start MuJoCo mirror/target-editor panel).
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -87,6 +96,12 @@ def generate_launch_description():
             default_value='/home/arm/ros2_ws/joint_offsets_dual.yaml',
             description='Absolute path to the 14-joint zero/sign calibration YAML',
         ),
+        DeclareLaunchArgument(
+            'use_gui',
+            default_value='false',
+            description='Start MuJoCo mirror/target-editor panel alongside real hardware control',
+            choices=['true', 'false'],
+        ),
     ]
 
     # ---- ros2_control + controllers + gripper ----
@@ -108,4 +123,18 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription([*args, control_launch])
+    gui_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('eiriarm_bringup'),
+                'launch',
+                'mujoco_panel.launch.py',
+            ]),
+        ),
+        launch_arguments={
+            'mode': 'mirror_real',
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('use_gui')),
+    )
+
+    return LaunchDescription([*args, control_launch, gui_launch])

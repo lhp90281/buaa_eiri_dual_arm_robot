@@ -4,22 +4,20 @@
 Sequence:
     1. Read the position controller's `joints` parameter so we know which
        joints to drive (and at what order).
-    2. switch_controller: activate joint_position_controller while keeping
+    2. Ensure joint_position_controller is active while keeping
        gravity_compensation_controller active; deactivate cartesian only if
-       it is currently active. The activation snapshots the current
-       measured pose as hold_pos_, so the next step ramps from wherever the
-       arm is right now.
+       it is currently active. If the position controller was already
+       active, no switch request is sent for it.
     3. Publish a 1-point JointTrajectory with positions all zero and
        time_from_start = --duration. The controller's pre-roll segment
        linearly interpolates from hold_pos_ to zero over that window.
     4. Sleep --duration (+ small margin) so the ramp completes.
-    5. If requested, deactivate joint_position_controller only; gravity
-       compensation remains active throughout. Hand-off is bumpless because
-       on_deactivate zeros kp/kd before releasing the joints.
+    5. If requested, deactivate joint_position_controller only if this
+       script activated it; gravity compensation remains active throughout.
 
 Cleanup guarantees:
-    - On Ctrl-C / exception, step 5 still runs (try/finally), so we never
-      leave the arm sitting under a stiff PD with no operator in the loop.
+    - On Ctrl-C / exception, step 5 still runs (try/finally), so a controller
+      state changed by this script is restored.
     - --no-restore-gravity skips step 5 if you want to immediately replay
       another trajectory after the ramp without re-switching.
 
@@ -100,6 +98,28 @@ def controller_is_active(node, controller_name):
         return False
     finally:
         node.destroy_client(client)
+
+
+def build_switch_plan(node, position_controller, gravity_controller,
+                      cartesian_controller):
+    """Return (activate, deactivate, position_was_active).
+
+    The controller_manager switch service is not idempotent in STRICT mode:
+    asking it to activate a controller that is already active can return
+    ok=False. Build the smallest switch request for the current state.
+    """
+    position_was_active = controller_is_active(node, position_controller)
+    activate = []
+    if not position_was_active:
+        activate.append(position_controller)
+    if not controller_is_active(node, gravity_controller):
+        activate.append(gravity_controller)
+
+    deactivate = []
+    if controller_is_active(node, cartesian_controller):
+        deactivate.append(cartesian_controller)
+
+    return activate, deactivate, position_was_active
 
 
 def switch_controllers(node, activate=None, deactivate=None, strict=True):
@@ -217,12 +237,11 @@ def main():
             node.get_logger().info(f"  - {j}")
 
         # ---- switch to position controller -----------------------------
-        activate = [args.position_controller]
-        if not controller_is_active(node, args.gravity_controller):
-            activate.append(args.gravity_controller)
-        deactivate = []
-        if controller_is_active(node, args.cartesian_controller):
-            deactivate.append(args.cartesian_controller)
+        activate, deactivate, position_was_active = build_switch_plan(
+            node,
+            args.position_controller,
+            args.gravity_controller,
+            args.cartesian_controller)
         if not switch_controllers(
                 node,
                 activate=activate,
@@ -238,7 +257,7 @@ def main():
             node.get_logger().error(
                 f"{args.position_controller} did not become active; aborting before publish")
             return 1
-        switched_to_position = True
+        switched_to_position = not position_was_active
 
         # ---- publish q=0 trajectory ------------------------------------
         pub = node.create_publisher(

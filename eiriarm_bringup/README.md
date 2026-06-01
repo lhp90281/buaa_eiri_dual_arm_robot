@@ -91,6 +91,9 @@ ros2 launch eiriarm_bringup real_robot.launch.py
 # 双臂关节 PD 跟踪
 ros2 launch eiriarm_bringup real_robot.launch.py controller:=joint_position
 
+# 默认重力补偿 + MuJoCo 真机镜像/控制面板
+ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
+
 # 双臂笛卡尔 PD
 ros2 launch eiriarm_bringup real_robot.launch.py controller:=cartesian_position
 
@@ -270,17 +273,50 @@ Bridge（终端 1）`Ctrl+C` 即关，没有特殊收尾。
 仿真路径独立，不走 `real_robot.launch.py`。详见 `system.launch.py` / `simulation.launch.py` / `mujoco_sim.launch.py` 与 `controllers.launch.py`。
 
 ```bash
-# MuJoCo + 控制器 (默认 impedance)
+# MuJoCo + 控制器（默认 joint_position，内部显式传 hardware:=sim）
 ros2 launch eiriarm_bringup system.launch.py
 
 # 仅仿真
 ros2 launch eiriarm_bringup mujoco_sim.launch.py
 
 # 仅控制器（连到外部仿真）
-ros2 launch eiriarm_bringup controllers.launch.py controller_type:=gravity_compensation
+ros2 launch eiriarm_bringup controllers.launch.py hardware:=sim controller_type:=gravity_compensation
 ```
 
-注意：仿真用的是 `dual_arm_robot_plug.urdf` + `ros2_control_controllers.yaml`，与真机的 `dual_arm_ros2_control.urdf.xacro` + `dual_arm_controllers.yaml` 是两套独立配置。
+注意：`controllers.launch.py` 默认 `hardware:=real`。仿真用
+`dual_arm_sim_ros2_control.urdf.xacro` + `dual_arm_sim_controllers.yaml`，
+真机用 `dual_arm_ros2_control.urdf.xacro` + `dual_arm_controllers.yaml`，
+两套控制参数分开维护。
+
+### MuJoCo 真机面板
+
+只把 MuJoCo 当作真机状态显示/目标编辑器，不启动物理仿真，也不启动控制器：
+
+```bash
+# 跟随真机 /joint_states，只显示
+ros2 launch eiriarm_bringup mujoco_panel.launch.py mode:=mirror_real
+
+# 采一帧真机姿态后自动冻结，slider 作为目标，下发后真机插值过去
+ros2 launch eiriarm_bringup mujoco_panel.launch.py mode:=target_editor trajectory_duration:=5.0
+```
+
+目标编辑流程：
+
+```bash
+# 快捷键：
+#   J  切到 joint_position_controller
+#   G  切回 gravity compensation teach mode
+#   K  切到 cartesian_position_controller
+#   H  切到 joint_position_controller 并发布 q=0 回零轨迹
+#   E  切到 joint_position_controller，然后冻结当前 MuJoCo 姿态进入 slider 编辑
+#   S  下发当前 slider 目标到 /joint_position_command
+#   C  取消编辑，回到跟随真机
+#
+# 也可以用 service：
+ros2 service call /mujoco_panel/start_edit std_srvs/srv/Trigger {}
+ros2 service call /mujoco_panel/send_target std_srvs/srv/Trigger {}
+ros2 service call /mujoco_panel/cancel_edit std_srvs/srv/Trigger {}
+```
 
 ---
 

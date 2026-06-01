@@ -21,8 +21,8 @@ namespace eiriarm_controllers
  * This is a bridge that allows ros2_control to work with systems that
  * communicate via topics (like simulators or real robots with topic-based drivers).
  * 
- * It subscribes to /joint_states and publishes to /ctrl/effort,
- * making it compatible with existing topic-based systems.
+ * It subscribes to /joint_states and publishes MIT-style commands to
+ * /ctrl/command plus /ctrl/gains, making it compatible with the MuJoCo bridge.
  * 
  * This approach is useful for:
  * - Simulators that use topic communication (MuJoCo, Gazebo Classic, etc.)
@@ -53,7 +53,7 @@ public:
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
 
   /**
-   * @brief Export command interfaces (effort)
+   * @brief Export command interfaces (position, velocity, effort, stiffness, damping)
    */
   std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
@@ -76,7 +76,7 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
   /**
-   * @brief Write effort commands to /ctrl/effort topic
+   * @brief Write MIT-style commands to simulator command topics
    */
   hardware_interface::return_type write(
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
@@ -92,7 +92,8 @@ private:
 
   // Topic subscriber and publisher
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
-  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr effort_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr command_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr gains_pub_;
 
   // Joint names (from URDF)
   std::vector<std::string> joint_names_;
@@ -100,9 +101,14 @@ private:
   // State storage (exposed to controllers via state_interfaces)
   std::vector<double> joint_positions_;
   std::vector<double> joint_velocities_;
+  std::vector<double> joint_state_efforts_;
 
   // Command storage (written by controllers via command_interfaces)
-  std::vector<double> joint_efforts_;
+  std::vector<double> joint_position_commands_;
+  std::vector<double> joint_velocity_commands_;
+  std::vector<double> joint_effort_commands_;
+  std::vector<double> joint_stiffness_;
+  std::vector<double> joint_damping_;
 
   // Map joint names to indices for fast lookup
   std::map<std::string, size_t> joint_name_to_index_;
@@ -112,7 +118,8 @@ private:
 
   // Topic names (configurable via URDF)
   std::string joint_state_topic_;
-  std::string effort_command_topic_;
+  std::string command_topic_;
+  std::string gains_topic_;
 
   // Flag to check if we've received joint states
   bool joint_states_received_ = false;

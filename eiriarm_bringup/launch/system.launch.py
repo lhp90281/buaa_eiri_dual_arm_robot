@@ -3,17 +3,17 @@
 Starts MuJoCo simulation and controllers together.
 
 Usage:
-  # Impedance controller (default)
+  # Joint-position controller (default, MIT position/velocity/kp/kd)
   ros2 launch eiriarm_bringup system.launch.py
 
   # Gravity compensation controller
   ros2 launch eiriarm_bringup system.launch.py controller_type:=gravity_compensation
 
-  # Cartesian position controller (uses position actuator MJCF)
+  # Cartesian position controller
   ros2 launch eiriarm_bringup system.launch.py controller_type:=cartesian_position
 
-  # Disable gripper controller
-  ros2 launch eiriarm_bringup system.launch.py enable_gripper:=false
+  # Enable standalone gripper controller (requires /motor/chN topics)
+  ros2 launch eiriarm_bringup system.launch.py enable_gripper:=true
 """
 
 from launch import LaunchDescription
@@ -26,11 +26,10 @@ from launch_ros.substitutions import FindPackageShare
 def launch_setup(context, *args, **kwargs):
     controller_type = LaunchConfiguration('controller_type').perform(context)
     
-    # Select MuJoCo config based on controller type
-    if controller_type == 'cartesian_position':
-        mujoco_config = 'simulate_position.yaml'
-    else:
-        mujoco_config = 'simulate.yaml'
+    # All controllers now use the same torque-actuator MJCF. The simulator
+    # applies the same MIT-mode equation as the real DM motor path:
+    # tau = torque_ff + kp*(q_des-q) + kd*(v_des-v).
+    mujoco_config = 'simulate.yaml'
     
     # Set environment variable for MuJoCo config file selection
     set_config_env = SetEnvironmentVariable('EIRIARM_MUJOCO_CONFIG', mujoco_config)
@@ -62,6 +61,7 @@ def launch_setup(context, *args, **kwargs):
                     ])
                 ]),
                 launch_arguments={
+                    'hardware': 'sim',
                     'controller_type': LaunchConfiguration('controller_type'),
                     'enable_gripper': LaunchConfiguration('enable_gripper'),
                 }.items()
@@ -76,8 +76,8 @@ def generate_launch_description():
     # Declare launch arguments
     controller_type_arg = DeclareLaunchArgument(
         'controller_type',
-        default_value='impedance',
-        description='Controller type: impedance, gravity_compensation, or cartesian_position'
+        default_value='joint_position',
+        description='Controller type: joint_position, gravity_compensation, or cartesian_position'
     )
     
     gui_arg = DeclareLaunchArgument(
@@ -88,7 +88,7 @@ def generate_launch_description():
     
     enable_gripper_arg = DeclareLaunchArgument(
         'enable_gripper',
-        default_value='true',
+        default_value='false',
         description='Enable gripper controller'
     )
     

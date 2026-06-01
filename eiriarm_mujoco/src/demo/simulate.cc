@@ -1340,6 +1340,47 @@ void UiModify(mjUI* ui, mjuiState* state, mjrContext* con) {
 void UiEvent(mjuiState* state) {
   mj::Simulate* sim = static_cast<mj::Simulate*>(state->userdata);
 
+  // EiriArm panel shortcuts must run before MuJoCo's built-in UI event
+  // handling, because mjui_event can consume ordinary letter keys.
+  if (state->type==mjEVENT_KEY && state->key!=0 && !state->control && !state->alt) {
+    switch (state->key) {
+    case 'J':
+    case 'j':
+      sim->eiriarm_panel_joint_mode_request.store(true);
+      return;
+
+    case 'G':
+    case 'g':
+      sim->eiriarm_panel_gravity_mode_request.store(true);
+      return;
+
+    case 'K':
+    case 'k':
+      sim->eiriarm_panel_cartesian_mode_request.store(true);
+      return;
+
+    case 'H':
+    case 'h':
+      sim->eiriarm_panel_home_request.store(true);
+      return;
+
+    case 'E':
+    case 'e':
+      sim->eiriarm_panel_start_edit_request.store(true);
+      return;
+
+    case 'S':
+    case 's':
+      sim->eiriarm_panel_send_target_request.store(true);
+      return;
+
+    case 'C':
+    case 'c':
+      sim->eiriarm_panel_cancel_edit_request.store(true);
+      return;
+    }
+  }
+
   // call UI 0 if event is directed to it
   if ((state->dragrect==sim->ui0.rectid) ||
       (state->dragrect==0 && state->mouserect==sim->ui0.rectid) ||

@@ -196,6 +196,13 @@ class Simulate {
   std::atomic_int droploadrequest = 0;
   std::atomic_int screenshotrequest = 0;
   std::atomic_int uiloadrequest = 0;
+  std::atomic_bool eiriarm_panel_start_edit_request = false;
+  std::atomic_bool eiriarm_panel_send_target_request = false;
+  std::atomic_bool eiriarm_panel_cancel_edit_request = false;
+  std::atomic_bool eiriarm_panel_joint_mode_request = false;
+  std::atomic_bool eiriarm_panel_gravity_mode_request = false;
+  std::atomic_bool eiriarm_panel_cartesian_mode_request = false;
+  std::atomic_bool eiriarm_panel_home_request = false;
 
   // loadrequest
   //   3: display a loading message

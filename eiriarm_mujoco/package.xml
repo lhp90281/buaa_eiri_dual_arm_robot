@@ -21,6 +21,8 @@
   <depend>yaml-cpp</depend>
   <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>controller_manager_msgs</depend>
   <depend>urdf</depend>
   <depend>kdl_parser</depend>
   <depend>robot_state_publisher</depend>

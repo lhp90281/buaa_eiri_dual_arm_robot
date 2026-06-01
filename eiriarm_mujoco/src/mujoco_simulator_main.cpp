@@ -209,6 +209,56 @@ void PhysicsLoop(mj::Simulate& sim) {
 
       // run only if model is present
       if (m) {
+        if (SimulateBridgeNodePtr) {
+          if (sim.eiriarm_panel_start_edit_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->StartEdit().c_str());
+          }
+          if (sim.eiriarm_panel_send_target_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->SendTarget().c_str());
+          }
+          if (sim.eiriarm_panel_cancel_edit_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->CancelEdit().c_str());
+          }
+          if (sim.eiriarm_panel_joint_mode_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->SwitchToJointPosition().c_str());
+          }
+          if (sim.eiriarm_panel_gravity_mode_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->SwitchToGravity().c_str());
+          }
+          if (sim.eiriarm_panel_cartesian_mode_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->SwitchToCartesianPosition().c_str());
+          }
+          if (sim.eiriarm_panel_home_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->GoHome().c_str());
+          }
+          SimulateBridgeNodePtr->ProcessPanelTick();
+        }
+
+        if (SimulateBridgeNodePtr && !SimulateBridgeNodePtr->PhysicsEnabled()) {
+          sim.run = 0;
+        }
+
         // running
         if (sim.run) {
           bool stepped = false;
@@ -345,20 +395,16 @@ void PhysicsThread(mj::Simulate* sim, const char* filename) {
 void PDControllerCallBack(const mjModel* m, mjData* d){
   // 如果没有实例化类,就返回
   if(SimulateBridgeNodePtr == nullptr) return;
+  // MuJoCo panel modes are display/target editors only; physics and control
+  // stay disabled so the window can mirror or edit real robot joint states.
+  if(!SimulateBridgeNodePtr->PhysicsEnabled()) return;
   // 暂停的时候不执行控制
   if(SimulateBridgeNodePtr->GetSimRun() == 0) return;
   // 执行ros2回调获取命令值
   rclcpp::spin_some(SimulateBridgeNodePtr);
-  // 获取命令
-  sensor_msgs::msg::JointState cmd = SimulateBridgeNodePtr->GetJointCommands();
-  // 运行PD控制器
-  if (cmd.effort.size() >= (size_t)m->nu) {
-    for(size_t i = 0; i < (size_t)m->nu; i++){
-      d->ctrl[i] = cmd.effort[i];
-      // 处理掉异常值
-      if(isnan(d->ctrl[i])) d->ctrl[i] = 0;
-    }
-  }
+  (void)m;
+  (void)d;
+  SimulateBridgeNodePtr->ApplyMitCommand();
 
   // 发布当前状态
   SimulateBridgeNodePtr->JointStatePublish();

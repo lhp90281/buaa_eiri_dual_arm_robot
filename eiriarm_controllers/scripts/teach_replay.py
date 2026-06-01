@@ -91,6 +91,27 @@ def controller_is_active(node, controller_name):
         node.destroy_client(client)
 
 
+def _build_switch_plan(node, position_controller, gravity_controller,
+                       cartesian_controller):
+    """Return (activate, deactivate, position_was_active).
+
+    STRICT switch_controller is not idempotent; do not ask it to activate a
+    controller that is already active.
+    """
+    position_was_active = controller_is_active(node, position_controller)
+    activate = []
+    if not position_was_active:
+        activate.append(position_controller)
+    if not controller_is_active(node, gravity_controller):
+        activate.append(gravity_controller)
+
+    deactivate = []
+    if controller_is_active(node, cartesian_controller):
+        deactivate.append(cartesian_controller)
+
+    return activate, deactivate, position_was_active
+
+
 def _switch_controllers(node, activate=None, deactivate=None, timeout=10.0, strict=True):
     """Atomic activate/deactivate via /controller_manager/switch_controller.
 
@@ -360,12 +381,11 @@ def cmd_replay(args) -> int:
     # active before streaming any trajectory.
     switched_in = False
     if args.auto_switch:
-        activate = [args.position_controller]
-        if not controller_is_active(node, args.gravity_controller):
-            activate.append(args.gravity_controller)
-        deactivate = []
-        if controller_is_active(node, args.cartesian_controller):
-            deactivate.append(args.cartesian_controller)
+        activate, deactivate, position_was_active = _build_switch_plan(
+            node,
+            args.position_controller,
+            args.gravity_controller,
+            args.cartesian_controller)
         if not _switch_controllers(
                 node,
                 activate=activate,
@@ -377,7 +397,7 @@ def cmd_replay(args) -> int:
             signal.signal(signal.SIGINT, prev_sigint)
             signal.signal(signal.SIGTERM, prev_sigterm)
             return 1
-        switched_in = True
+        switched_in = not position_was_active
 
     def _restore_switch():
         # Called from every exit path below. Safe to call even when we

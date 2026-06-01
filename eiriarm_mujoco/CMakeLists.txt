@@ -27,6 +27,8 @@ find_package(glfw3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 find_package(urdf REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(robot_state_publisher REQUIRED)
@@ -69,6 +71,8 @@ ament_target_dependencies(simulate
   "std_srvs"
   "sensor_msgs"
   "geometry_msgs"
+  "trajectory_msgs"
+  "controller_manager_msgs"
   "urdf"
   "kdl_parser"
   "robot_state_publisher"

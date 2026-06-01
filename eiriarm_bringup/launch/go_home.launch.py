@@ -7,13 +7,13 @@ Run this AFTER `real_robot.launch.py` is up (in a third terminal); the
 controller_manager already has joint_position_controller loaded (active
 or inactive depending on `controller:=`), so this helper just:
 
-  1. switches joint_position_controller active, gravity_compensation
-     inactive
+  1. ensures joint_position_controller is active, without re-activating it
+     if it is already active
   2. publishes a 1-point JointTrajectory at q=0 with
      time_from_start=duration on /joint_position_command
   3. sleeps for `duration`
-  4. (optional, default ON) switches gravity_compensation active and
-     joint_position_controller inactive
+  4. (optional, default ON) switches back only if this helper activated
+     joint_position_controller
 
 Usage
 -----
@@ -35,9 +35,9 @@ Arguments
 ---------
 
   duration         Ramp seconds from current pose to q=0 (default 5.0).
-  restore_gravity  true|false. When true (default), switches
-                   gravity_compensation_controller active and
-                   joint_position_controller inactive after the ramp.
+  restore_gravity  true|false. When true (default), restores the previous
+                   controller state if this helper activated
+                   joint_position_controller after the ramp.
                    Set false to chain straight into a replay.
   joints           Optional, space-separated joint-list override. Empty
                    (default) -> query joint_position_controller's

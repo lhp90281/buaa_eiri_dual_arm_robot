@@ -2,7 +2,11 @@ mujoco_simulator:
   # Path to your MJCF (.xml) model file.
   # Example: "/home/ubuntu/ros2_ws/src/eiriarm_description/mjcf/eiriarm.xml"
   modelFile: "/home/arm/ros2_ws/src/description/dual_arm_support/mjcf/dual_arm_robot.xml"
-  jointCommandsTopic: "/ctrl/effort"
+  # MIT-style command split across two JointState topics:
+  #   /ctrl/command: name + position(q_des) + velocity(v_des) + effort(torque_ff)
+  #   /ctrl/gains:   name + position(kp)    + velocity(kd)
+  jointCommandsTopic: "/ctrl/command"
+  jointGainsTopic: "/ctrl/gains"
   unPauseService: "/unpause_physics"
   initPauseFlag: true
   modelTableFlag: true
