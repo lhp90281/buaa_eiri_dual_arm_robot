@@ -228,10 +228,14 @@ def launch_setup(context, *args, **kwargs):
     # Gravity compensation runs underneath every supported controller (it
     # owns the effort interface; the others claim pos/vel/stiff/damp). It is
     # always active when this launch is used.
+    gravity_active = LaunchConfiguration('gravity_compensation').perform(context).strip().lower() == 'true'
+    gravity_args = ['gravity_compensation_controller', '-c', '/controller_manager']
+    if not gravity_active:
+        gravity_args.append('--inactive')
     gravity_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['gravity_compensation_controller', '-c', '/controller_manager'],
+        arguments=gravity_args,
         output='screen',
     )
 
@@ -347,6 +351,16 @@ def generate_launch_description():
             'gripper',
             default_value='true',
             description='Start the gripper_controller standalone node (auto-calibrates on startup)',
+            choices=['true', 'false'],
+        ),
+        DeclareLaunchArgument(
+            'gravity_compensation',
+            default_value='true',
+            description=(
+                'Spawn gravity_compensation_controller ACTIVE (true) or only '
+                'LOADED/inactive (false). Set false to run broadcast-only '
+                '(no torque), e.g. to verify joint signs in RViz by hand.'
+            ),
             choices=['true', 'false'],
         ),
         OpaqueFunction(function=launch_setup),

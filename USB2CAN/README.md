@@ -251,8 +251,8 @@ ros2 launch usb2can usb2can_with_dm.launch.py device:=/dev/ttyACM0
 # 第 2 步: 使能 ch1 上要用的电机 (motor 0 和 motor 2)
 #   bridge 会一帧把这两颗的 8B payload 填成 FF FF FF FF FF FF FF FC,
 #   cmd 字节 = 0x05, STM32 转发到 CAN ID=1 和 3, 电机进入 MIT 模式.
-ros2 topic pub -r 1 /motor/ch1/motor_enable usb2can/msg/MotorEnableArray "{
-  channel: 1,
+ros2 topic pub -r 1 /motor/ch2/motor_enable usb2can/msg/MotorEnableArray "{
+  channel: 2,
   motors: [
     {id: 0, enable: true},
     {id: 1, enable: true},
