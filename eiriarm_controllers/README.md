@@ -16,6 +16,7 @@ src/eiriarm_bringup/README.md
 - `JointPositionController`：MIT 五参数关节位置控制，订阅 `/joint_position_command`
 - `CartesianPositionControllerPlugin`：双臂笛卡尔目标逆解控制
 - `gripper_controller_node`：独立夹爪控制节点
+- `teleop_joint_bridge`：双机 UDP 关节遥操作桥
 - `go_home`、`teach_replay`、`joint_zero_calibration`、`zero_at_current_pose` 等工具脚本
 
 注意：本包不提供运动规划。笛卡尔控制器只对目标位姿做 IK，并把结果作为关节目标插值执行；它不做碰撞检测、避障或路径搜索。
@@ -34,4 +35,7 @@ ros2 launch eiriarm_controllers dual_arm.launch.py
 ros2 launch eiriarm_bringup go_home.launch.py
 ros2 launch eiriarm_bringup record.launch.py output:=recordings/demo.yaml
 ros2 launch eiriarm_bringup replay.launch.py input:=recordings/demo.yaml
+
+# 双机遥操作，具体 IP/端口和流程见 eiriarm_bringup/README.md
+ros2 launch eiriarm_bringup teleop.launch.py role:=master peer_host:=192.168.10.20
 ```

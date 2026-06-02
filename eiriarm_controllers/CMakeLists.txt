@@ -276,6 +276,11 @@ install(PROGRAMS scripts/go_home.py
   RENAME go_home
 )
 
+install(PROGRAMS scripts/teleop_joint_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME teleop_joint_bridge
+)
+
 # ============================================================================
 # 4. Install headers and other files
 # ============================================================================

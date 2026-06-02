@@ -17,11 +17,12 @@
 - [7. 示教录制与回放](#7-示教录制与回放)
 - [8. MuJoCo 仿真](#8-mujoco-仿真)
 - [9. MuJoCo 真机显示/编辑面板](#9-mujoco-真机显示编辑面板)
-- [10. 夹爪](#10-夹爪)
-- [11. 关节零点标定](#11-关节零点标定)
-- [12. 摩擦辨识与重力补偿调参](#12-摩擦辨识与重力补偿调参不建议使用需要拆除电机独立标定不能整臂标定)
-- [13. 主要文件](#13-主要文件)
-- [14. 故障排查](#14-故障排查)
+- [10. 双机遥操作](#10-双机遥操作)
+- [11. 夹爪](#11-夹爪)
+- [12. 关节零点标定](#12-关节零点标定)
+- [13. 摩擦辨识与重力补偿调参](#13-摩擦辨识与重力补偿调参不建议使用需要拆除电机独立标定不能整臂标定)
+- [14. 主要文件](#14-主要文件)
+- [15. 故障排查](#15-故障排查)
 
 ---
 
@@ -534,7 +535,153 @@ ros2 launch eiriarm_bringup mujoco_panel.launch.py trajectory_duration:=8.0
 
 ---
 
-## 10. 夹爪
+## 10. 双机遥操作
+
+遥操作使用两套机械臂和两台主机。两台主机的 ROS 2 图不需要互通，建议使用不同 `ROS_DOMAIN_ID`，避免 `/joint_states`、`/controller_manager` 等本地话题撞名。遥操作本身只通过 UDP 交换关节角度。
+
+第一版只做双臂全关节关节角跟随，不做规划、不做避障、不做力传感器闭环。
+
+### 启动拓扑
+
+每台机器仍按真机流程先启动本机硬件：
+
+```bash
+# 每台机器终端 1
+source install/setup.bash
+ros2 launch eiriarm_bringup bridge.launch.py
+
+# 每台机器终端 2，推荐打开 GUI
+source install/setup.bash
+ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
+```
+
+然后每台机器再启动一个遥操作节点。假设：
+
+- 主臂主机 IP：`192.168.10.10`
+- 从臂主机 IP：`192.168.10.20`
+- 主臂接收端口：`15000`
+- 从臂接收端口：`15001`
+
+主臂主机：
+
+```bash
+source install/setup.bash
+ros2 launch eiriarm_bringup teleop.launch.py \
+  role:=master \
+  mode:=no_feedback \
+  peer_host:=192.168.10.20 \
+  local_port:=15000 \
+  peer_port:=15001
+```
+
+从臂主机：
+
+```bash
+source install/setup.bash
+ros2 launch eiriarm_bringup teleop.launch.py \
+  role:=slave \
+  mode:=no_feedback \
+  peer_host:=192.168.10.10 \
+  local_port:=15001 \
+  peer_port:=15000
+```
+
+如果两边使用同一个端口也可以，例如都用 `local_port:=15000 peer_port:=15000`，只要防火墙允许 UDP 端口互通。
+
+### 无力反馈模式
+
+`mode:=no_feedback`：
+
+- 主臂对齐阶段临时切到 `joint_position_controller`
+- 对齐完成后主臂切回 `gravity_compensation_controller`
+- 主臂只发送当前关节角度
+- 从臂切到 `joint_position_controller` 并跟踪主臂角度
+
+启动两个 teleop 节点后，在主臂主机执行：
+
+```bash
+ros2 service call /teleop/align std_srvs/srv/Trigger {}
+```
+
+等待返回成功后，两台机器都执行 enable：
+
+```bash
+ros2 service call /teleop/enable std_srvs/srv/Trigger {}
+```
+
+停止遥操作：
+
+```bash
+ros2 service call /teleop/disable std_srvs/srv/Trigger {}
+```
+
+### 力反馈模式
+
+`mode:=force_feedback`：
+
+- 主臂和从臂都使用 `joint_position_controller`
+- 两边互相把对端关节角作为本机目标
+- 这是位置耦合式力反馈，不是基于力矩传感器的真实力反馈
+
+启动命令只需要把两边的 `mode` 改成 `force_feedback`。流程仍然是：
+
+```bash
+# 主臂主机
+ros2 service call /teleop/align std_srvs/srv/Trigger {}
+
+# 两台机器
+ros2 service call /teleop/enable std_srvs/srv/Trigger {}
+```
+
+力反馈模式首次测试建议降低 `joint_position_controller` 的 `kp_gains`，并从空载、低速、小范围开始。
+
+### 安全参数
+
+| 参数 | 默认 | 说明 |
+|---|---:|---|
+| `rate_hz` | `50.0` | UDP 状态交换和目标下发频率 |
+| `timeout` | `0.3` | 超过该时间没收到对端 UDP 包会自动 disable |
+| `align_duration` | `5.0` | 主臂对齐从臂的插值时间 |
+| `max_start_error` | `0.5` | enable 前两边最大关节误差限制，单位 rad |
+| `max_runtime_error` | `1.0` | 运行中最大关节误差限制，超过自动 disable |
+| `max_step` | `0.03` | 每个周期目标最大变化量，单位 rad |
+
+示例：
+
+```bash
+ros2 launch eiriarm_bringup teleop.launch.py \
+  role:=slave \
+  mode:=no_feedback \
+  peer_host:=192.168.10.10 \
+  local_port:=15001 \
+  peer_port:=15000 \
+  rate_hz:=30 \
+  max_step:=0.015
+```
+
+### 直接运行节点
+
+不用 launch 也可以：
+
+```bash
+ros2 run eiriarm_controllers teleop_joint_bridge \
+  --role master \
+  --mode no_feedback \
+  --peer-host 192.168.10.20 \
+  --local-port 15000 \
+  --peer-port 15001
+```
+
+常见排查：
+
+- `/teleop/enable` 提示没有 peer joint state：检查 IP、UDP 端口、防火墙、网线
+- 从臂不动：确认从臂本地 `real_robot.launch.py` 已启动，且 `/controller_manager` 可用
+- enable 失败提示误差过大：先重新执行主臂侧 `/teleop/align`
+- UDP 网络正常但 ROS 服务无响应：检查本机是否忘了 `source install/setup.bash`
+
+---
+
+## 11. 夹爪
 
 夹爪不是 `ros2_control` 控制器，而是独立节点，直接走 `/motor/ch1` 和 `/motor/ch2` 的 slot 7。
 
@@ -588,7 +735,7 @@ src/eiriarm_controllers/config/gripper_controller.yaml
 
 ---
 
-## 11. 关节零点标定
+## 12. 关节零点标定
 
 零点标定输出 `joint_offsets_*.yaml`。真机默认读取启动目录下的：
 
@@ -676,7 +823,7 @@ ros2 topic echo /joint_states
 
 ---
 
-## 12. 摩擦辨识与重力补偿调参（不建议使用，需要拆除电机独立标定，不能整臂标定）
+## 13. 摩擦辨识与重力补偿调参（不建议使用，需要拆除电机独立标定，不能整臂标定）
 
 摩擦模型文件默认读取启动目录下的：
 
@@ -722,7 +869,7 @@ src/eiriarm_controllers/config/dual_arm_controllers.yaml
 
 ---
 
-## 13. 主要文件
+## 14. 主要文件
 
 | 路径 | 说明 |
 |---|---|
@@ -745,7 +892,7 @@ src/eiriarm_controllers/config/dual_arm_controllers.yaml
 
 ---
 
-## 14. 故障排查
+## 15. 故障排查
 
 ### 找不到串口
 
