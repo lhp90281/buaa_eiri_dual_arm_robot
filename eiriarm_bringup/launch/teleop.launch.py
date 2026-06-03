@@ -81,7 +81,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'force_deadband_slave',
-            default_value='0.008',
+            default_value='0.0',
             description='Force-feedback slave soft deadband, rad',
         ),
         DeclareLaunchArgument(
@@ -90,13 +90,23 @@ def generate_launch_description():
             description='Force-feedback deadband hysteresis, rad',
         ),
         DeclareLaunchArgument(
+            'force_deadband_master_joints',
+            default_value='',
+            description='Optional 14-value master deadband list, comma/space separated',
+        ),
+        DeclareLaunchArgument(
+            'force_deadband_slave_joints',
+            default_value='',
+            description='Optional 14-value slave deadband list, comma/space separated',
+        ),
+        DeclareLaunchArgument(
             'master_coupling_scale',
             default_value='0.45',
             description='Force-feedback master coupling scale',
         ),
         DeclareLaunchArgument(
             'slave_coupling_scale',
-            default_value='0.9',
+            default_value='1.0',
             description='Force-feedback slave coupling scale',
         ),
     ]
@@ -122,6 +132,8 @@ def generate_launch_description():
             '--force-deadband-master', LaunchConfiguration('force_deadband_master'),
             '--force-deadband-slave', LaunchConfiguration('force_deadband_slave'),
             '--force-deadband-hysteresis', LaunchConfiguration('force_deadband_hysteresis'),
+            '--force-deadband-master-joints', LaunchConfiguration('force_deadband_master_joints'),
+            '--force-deadband-slave-joints', LaunchConfiguration('force_deadband_slave_joints'),
             '--master-coupling-scale', LaunchConfiguration('master_coupling_scale'),
             '--slave-coupling-scale', LaunchConfiguration('slave_coupling_scale'),
         ],

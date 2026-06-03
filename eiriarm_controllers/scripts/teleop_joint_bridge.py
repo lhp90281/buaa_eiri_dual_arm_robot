@@ -116,6 +116,14 @@ class TeleopJointBridge(Node):
         self.aligned = False
         self.enabled = False
         self.last_commanded: Optional[List[float]] = None
+        self.force_deadband_master = self._resolve_joint_values(
+            args.force_deadband_master_joints,
+            args.force_deadband_master,
+            'force_deadband_master_joints')
+        self.force_deadband_slave = self._resolve_joint_values(
+            args.force_deadband_slave_joints,
+            args.force_deadband_slave,
+            'force_deadband_slave_joints')
         self.force_feedback_active = [False] * len(self.joint_names)
         self._last_timeout_log = 0.0
 
@@ -161,6 +169,21 @@ class TeleopJointBridge(Node):
     # ------------------------------------------------------------------
     # ROS state and controller helpers
     # ------------------------------------------------------------------
+    def _resolve_joint_values(self, raw: str, fallback: float, name: str) -> List[float]:
+        raw = (raw or '').strip()
+        if not raw:
+            return [float(fallback)] * len(self.joint_names)
+        values = [float(x) for x in raw.replace(',', ' ').split()]
+        if len(values) == 1:
+            values = values * len(self.joint_names)
+        if len(values) != len(self.joint_names):
+            raise ValueError(
+                f'{name} must contain 1 or {len(self.joint_names)} values; '
+                f'got {len(values)}')
+        if any(v < 0.0 for v in values):
+            raise ValueError(f'{name} values must be >= 0')
+        return values
+
     def _call_service(self, client, request, timeout=5.0):
         if not client.wait_for_service(timeout_sec=timeout):
             return None
@@ -490,12 +513,11 @@ class TeleopJointBridge(Node):
     def _force_feedback_target(self, local: List[float], remote: List[float]) -> List[float]:
         """Role-specific soft deadband and coupling for bilateral teleop."""
         if self.role == 'master':
-            deadband = self.args.force_deadband_master
+            deadbands = self.force_deadband_master
             scale = self.args.master_coupling_scale
         else:
-            deadband = self.args.force_deadband_slave
+            deadbands = self.force_deadband_slave
             scale = self.args.slave_coupling_scale
-        exit_deadband = max(0.0, deadband - self.args.force_deadband_hysteresis)
 
         target = []
         with self._lock:
@@ -504,6 +526,8 @@ class TeleopJointBridge(Node):
             active = list(self.force_feedback_active)
 
             for i, (q_local, q_remote) in enumerate(zip(local, remote)):
+                deadband = deadbands[i]
+                exit_deadband = max(0.0, deadband - self.args.force_deadband_hysteresis)
                 error = q_remote - q_local
                 abs_error = abs(error)
 
@@ -620,13 +644,17 @@ def parse_args(argv):
                    help='max target change per publish cycle, rad')
     p.add_argument('--force-deadband-master', type=float, default=0.015,
                    help='force-feedback master soft deadband, rad')
-    p.add_argument('--force-deadband-slave', type=float, default=0.008,
+    p.add_argument('--force-deadband-slave', type=float, default=0.0,
                    help='force-feedback slave soft deadband, rad')
     p.add_argument('--force-deadband-hysteresis', type=float, default=0.004,
                    help='force-feedback deadband hysteresis, rad')
+    p.add_argument('--force-deadband-master-joints', default='',
+                   help='optional per-joint master deadbands, comma/space separated')
+    p.add_argument('--force-deadband-slave-joints', default='',
+                   help='optional per-joint slave deadbands, comma/space separated')
     p.add_argument('--master-coupling-scale', type=float, default=0.45,
                    help='force-feedback master coupling scale')
-    p.add_argument('--slave-coupling-scale', type=float, default=0.9,
+    p.add_argument('--slave-coupling-scale', type=float, default=1.0,
                    help='force-feedback slave coupling scale')
     p.add_argument('--joint-state-topic', default='/joint_states')
     p.add_argument('--command-topic', default='/joint_position_command')
