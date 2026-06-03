@@ -735,6 +735,46 @@ ros2 run eiriarm_controllers teleop_joint_bridge \
 - enable 失败提示误差过大：先重新执行主臂侧 `/teleop/align`
 - UDP 网络正常但 ROS 服务无响应：检查本机是否忘了 `source install/setup.bash`
 
+### 外力估计观测
+
+在从臂机器上可以先跑观测脚本，不参与控制，只记录和显示：
+
+```text
+tau_residual = tau_measured - tau_gravity_scaled - tau_friction
+```
+
+这个 residual 用来判断电机反馈扭矩是否稳定，是否值得继续做基于外力估计的力反馈。
+
+启动真机、无力反馈遥操作后，在从臂机器执行：
+
+```bash
+source install/setup.bash
+ros2 run eiriarm_controllers teleop_force_observer \
+  --output recordings/slave_force_observer.csv
+```
+
+只记录不弹图：
+
+```bash
+ros2 run eiriarm_controllers teleop_force_observer \
+  --output recordings/slave_force_observer.csv \
+  --no-plot
+```
+
+只画部分关节：
+
+```bash
+ros2 run eiriarm_controllers teleop_force_observer \
+  --output recordings/slave_force_observer.csv \
+  --plot-joints left_joint_0,left_joint_1,left_joint_2,right_joint_0,right_joint_1,right_joint_2
+```
+
+CSV 每个关节包含：
+
+```text
+q, v, tau_meas, tau_gravity, tau_friction, tau_comp, tau_residual
+```
+
 ---
 
 ## 11. 夹爪

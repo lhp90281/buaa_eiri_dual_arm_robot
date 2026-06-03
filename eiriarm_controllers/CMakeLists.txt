@@ -281,6 +281,11 @@ install(PROGRAMS scripts/teleop_joint_bridge.py
   RENAME teleop_joint_bridge
 )
 
+install(PROGRAMS scripts/teleop_force_observer.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME teleop_force_observer
+)
+
 # ============================================================================
 # 4. Install headers and other files
 # ============================================================================

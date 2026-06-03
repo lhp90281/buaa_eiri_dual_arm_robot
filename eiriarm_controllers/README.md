@@ -17,6 +17,7 @@ src/eiriarm_bringup/README.md
 - `CartesianPositionControllerPlugin`：双臂笛卡尔目标逆解控制
 - `gripper_controller_node`：独立夹爪控制节点
 - `teleop_joint_bridge`：双机 UDP 关节遥操作桥
+- `teleop_force_observer`：从臂外力估计观测/记录/绘图脚本
 - `config/teleop_joint_gains.yaml`：力反馈 master/slave 关节位置增益 profile
 - `go_home`、`teach_replay`、`joint_zero_calibration`、`zero_at_current_pose` 等工具脚本
 
