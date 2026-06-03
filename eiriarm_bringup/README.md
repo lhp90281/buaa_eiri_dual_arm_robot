@@ -656,7 +656,7 @@ ros2 service call /teleop/enable std_srvs/srv/Trigger {}
 src/eiriarm_controllers/config/teleop_joint_gains.yaml
 ```
 
-力反馈模式首次测试建议从空载、低速、小范围开始。若主臂仍然顶手，继续降低 `master.kp_gains`；若发抖，优先小幅增加 `master.kd_gains` 或降低 `max_step`。
+力反馈模式首次测试建议从空载、低速、小范围开始。若主臂仍然顶手，优先调大 `force_deadband_master` 或调低 `master_coupling_scale`；若反馈太弱，再反向调整。若发抖，优先小幅增加 `master.kd_gains`、降低 `max_step`，或略增大死区。
 
 ### 安全参数
 
@@ -668,6 +668,11 @@ src/eiriarm_controllers/config/teleop_joint_gains.yaml
 | `max_start_error` | `0.5` | enable 前两边最大关节误差限制，单位 rad |
 | `max_runtime_error` | `1.0` | 运行中最大关节误差限制，超过自动 disable |
 | `max_step` | `0.03` | 每个周期目标最大变化量，单位 rad |
+| `force_deadband_master` | `0.015` | 力反馈主臂软死区，单位 rad；小误差不反馈 |
+| `force_deadband_slave` | `0.008` | 力反馈从臂软死区，单位 rad |
+| `force_deadband_hysteresis` | `0.004` | 死区迟滞，防止阈值附近反复开关 |
+| `master_coupling_scale` | `0.45` | 主臂反馈比例，越小越丝滑、反馈越轻 |
+| `slave_coupling_scale` | `0.9` | 从臂跟随比例，越大跟随越紧 |
 
 示例：
 
@@ -680,6 +685,20 @@ ros2 launch eiriarm_bringup teleop.launch.py \
   peer_port:=15000 \
   rate_hz:=30 \
   max_step:=0.015
+```
+
+力反馈调手感示例：
+
+```bash
+ros2 launch eiriarm_bringup teleop.launch.py \
+  role:=master \
+  mode:=force_feedback \
+  peer_host:=192.168.10.20 \
+  local_port:=15000 \
+  peer_port:=15001 \
+  force_deadband_master:=0.02 \
+  master_coupling_scale:=0.35 \
+  max_step:=0.01
 ```
 
 ### 直接运行节点
