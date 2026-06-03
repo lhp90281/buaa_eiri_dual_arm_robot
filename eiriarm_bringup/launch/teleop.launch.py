@@ -74,41 +74,6 @@ def generate_launch_description():
             default_value='0.03',
             description='Maximum commanded target change per cycle, rad',
         ),
-        DeclareLaunchArgument(
-            'force_deadband_master',
-            default_value='0.015',
-            description='Force-feedback master soft deadband, rad',
-        ),
-        DeclareLaunchArgument(
-            'force_deadband_slave',
-            default_value='0.0',
-            description='Force-feedback slave soft deadband, rad',
-        ),
-        DeclareLaunchArgument(
-            'force_deadband_hysteresis',
-            default_value='0.004',
-            description='Force-feedback deadband hysteresis, rad',
-        ),
-        DeclareLaunchArgument(
-            'force_deadband_master_joints',
-            default_value='',
-            description='Optional 14-value master deadband list, comma/space separated',
-        ),
-        DeclareLaunchArgument(
-            'force_deadband_slave_joints',
-            default_value='',
-            description='Optional 14-value slave deadband list, comma/space separated',
-        ),
-        DeclareLaunchArgument(
-            'master_coupling_scale',
-            default_value='0.45',
-            description='Force-feedback master coupling scale',
-        ),
-        DeclareLaunchArgument(
-            'slave_coupling_scale',
-            default_value='1.0',
-            description='Force-feedback slave coupling scale',
-        ),
     ]
 
     teleop = Node(
@@ -129,13 +94,6 @@ def generate_launch_description():
             '--max-start-error', LaunchConfiguration('max_start_error'),
             '--max-runtime-error', LaunchConfiguration('max_runtime_error'),
             '--max-step', LaunchConfiguration('max_step'),
-            '--force-deadband-master', LaunchConfiguration('force_deadband_master'),
-            '--force-deadband-slave', LaunchConfiguration('force_deadband_slave'),
-            '--force-deadband-hysteresis', LaunchConfiguration('force_deadband_hysteresis'),
-            '--force-deadband-master-joints', LaunchConfiguration('force_deadband_master_joints'),
-            '--force-deadband-slave-joints', LaunchConfiguration('force_deadband_slave_joints'),
-            '--master-coupling-scale', LaunchConfiguration('master_coupling_scale'),
-            '--slave-coupling-scale', LaunchConfiguration('slave_coupling_scale'),
         ],
     )
 

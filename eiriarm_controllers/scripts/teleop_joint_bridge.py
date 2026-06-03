@@ -116,15 +116,6 @@ class TeleopJointBridge(Node):
         self.aligned = False
         self.enabled = False
         self.last_commanded: Optional[List[float]] = None
-        self.force_deadband_master = self._resolve_joint_values(
-            args.force_deadband_master_joints,
-            args.force_deadband_master,
-            'force_deadband_master_joints')
-        self.force_deadband_slave = self._resolve_joint_values(
-            args.force_deadband_slave_joints,
-            args.force_deadband_slave,
-            'force_deadband_slave_joints')
-        self.force_feedback_active = [False] * len(self.joint_names)
         self._last_timeout_log = 0.0
 
         qos = QoSProfile(depth=10)
@@ -169,21 +160,6 @@ class TeleopJointBridge(Node):
     # ------------------------------------------------------------------
     # ROS state and controller helpers
     # ------------------------------------------------------------------
-    def _resolve_joint_values(self, raw: str, fallback: float, name: str) -> List[float]:
-        raw = (raw or '').strip()
-        if not raw:
-            return [float(fallback)] * len(self.joint_names)
-        values = [float(x) for x in raw.replace(',', ' ').split()]
-        if len(values) == 1:
-            values = values * len(self.joint_names)
-        if len(values) != len(self.joint_names):
-            raise ValueError(
-                f'{name} must contain 1 or {len(self.joint_names)} values; '
-                f'got {len(values)}')
-        if any(v < 0.0 for v in values):
-            raise ValueError(f'{name} values must be >= 0')
-        return values
-
     def _call_service(self, client, request, timeout=5.0):
         if not client.wait_for_service(timeout_sec=timeout):
             return None
@@ -474,7 +450,6 @@ class TeleopJointBridge(Node):
             self.enabled = True
             self.last_commanded = list(local)
             self.peer_enabled_seen = remote_enabled
-            self.force_feedback_active = [False] * len(self.joint_names)
         resp.success = True
         resp.message = f'teleop enabled role={self.role} mode={self.mode}'
         return resp
@@ -484,7 +459,6 @@ class TeleopJointBridge(Node):
         with self._lock:
             self.enabled = False
             self.peer_enabled_seen = False
-            self.force_feedback_active = [False] * len(self.joint_names)
         if local is not None and (self.mode == 'force_feedback' or self.role == 'slave'):
             self._publish_trajectory(local, self.args.hold_duration)
         if self.mode == 'no_feedback' and self.role == 'master':
@@ -510,43 +484,6 @@ class TeleopJointBridge(Node):
             limited.append(nxt)
         return limited
 
-    def _force_feedback_target(self, local: List[float], remote: List[float]) -> List[float]:
-        """Role-specific soft deadband and coupling for bilateral teleop."""
-        if self.role == 'master':
-            deadbands = self.force_deadband_master
-            scale = self.args.master_coupling_scale
-        else:
-            deadbands = self.force_deadband_slave
-            scale = self.args.slave_coupling_scale
-
-        target = []
-        with self._lock:
-            if len(self.force_feedback_active) != len(local):
-                self.force_feedback_active = [False] * len(local)
-            active = list(self.force_feedback_active)
-
-            for i, (q_local, q_remote) in enumerate(zip(local, remote)):
-                deadband = deadbands[i]
-                exit_deadband = max(0.0, deadband - self.args.force_deadband_hysteresis)
-                error = q_remote - q_local
-                abs_error = abs(error)
-
-                if active[i]:
-                    if abs_error < exit_deadband:
-                        active[i] = False
-                elif abs_error > deadband:
-                    active[i] = True
-
-                if active[i]:
-                    effective_error = max(0.0, abs_error - deadband)
-                    direction = 1.0 if error >= 0.0 else -1.0
-                    target.append(q_local + direction * scale * effective_error)
-                else:
-                    target.append(q_local)
-
-            self.force_feedback_active = active
-        return target
-
     def _on_timer(self):
         self._send_state()
         now = time.monotonic()
@@ -565,7 +502,6 @@ class TeleopJointBridge(Node):
         if not recent:
             with self._lock:
                 self.enabled = False
-                self.force_feedback_active = [False] * len(self.joint_names)
             if now - self._last_timeout_log > 1.0:
                 self.get_logger().error(
                     f'peer timeout > {self.args.timeout:.2f}s; teleop disabled')
@@ -578,7 +514,6 @@ class TeleopJointBridge(Node):
             with self._lock:
                 self.enabled = False
                 self.peer_enabled_seen = False
-                self.force_feedback_active = [False] * len(self.joint_names)
             if self.mode == 'force_feedback' or self.role == 'slave':
                 self._publish_trajectory(local, self.args.hold_duration)
             if self.mode == 'no_feedback' and self.role == 'master':
@@ -593,18 +528,13 @@ class TeleopJointBridge(Node):
         if error > self.args.max_runtime_error:
             with self._lock:
                 self.enabled = False
-                self.force_feedback_active = [False] * len(self.joint_names)
             self._publish_trajectory(local, self.args.hold_duration)
             self.get_logger().error(
                 f'joint error {error:.3f} rad exceeds runtime limit '
                 f'{self.args.max_runtime_error:.3f}; teleop disabled')
             return
 
-        if self.mode == 'force_feedback':
-            target = self._force_feedback_target(local, remote)
-        else:
-            target = remote
-        target = self._limited_target(target)
+        target = self._limited_target(remote)
         self._publish_trajectory(target, self.args.command_duration)
 
     def shutdown(self):
@@ -642,20 +572,6 @@ def parse_args(argv):
     p.add_argument('--max-runtime-error', type=float, default=1.0)
     p.add_argument('--max-step', type=float, default=0.03,
                    help='max target change per publish cycle, rad')
-    p.add_argument('--force-deadband-master', type=float, default=0.015,
-                   help='force-feedback master soft deadband, rad')
-    p.add_argument('--force-deadband-slave', type=float, default=0.0,
-                   help='force-feedback slave soft deadband, rad')
-    p.add_argument('--force-deadband-hysteresis', type=float, default=0.004,
-                   help='force-feedback deadband hysteresis, rad')
-    p.add_argument('--force-deadband-master-joints', default='',
-                   help='optional per-joint master deadbands, comma/space separated')
-    p.add_argument('--force-deadband-slave-joints', default='',
-                   help='optional per-joint slave deadbands, comma/space separated')
-    p.add_argument('--master-coupling-scale', type=float, default=0.45,
-                   help='force-feedback master coupling scale')
-    p.add_argument('--slave-coupling-scale', type=float, default=1.0,
-                   help='force-feedback slave coupling scale')
     p.add_argument('--joint-state-topic', default='/joint_states')
     p.add_argument('--command-topic', default='/joint_position_command')
     p.add_argument('--controller-manager', default='/controller_manager')
@@ -677,14 +593,6 @@ def parse_args(argv):
         p.error('--align-duration must be > 0')
     if args.max_step <= 0.0:
         p.error('--max-step must be > 0')
-    if args.force_deadband_master < 0.0 or args.force_deadband_slave < 0.0:
-        p.error('--force-deadband-master/slave must be >= 0')
-    if args.force_deadband_hysteresis < 0.0:
-        p.error('--force-deadband-hysteresis must be >= 0')
-    if not (0.0 <= args.master_coupling_scale <= 1.0):
-        p.error('--master-coupling-scale must be in [0, 1]')
-    if not (0.0 <= args.slave_coupling_scale <= 1.0):
-        p.error('--slave-coupling-scale must be in [0, 1]')
     return args
 
 
