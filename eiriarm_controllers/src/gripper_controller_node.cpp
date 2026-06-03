@@ -18,6 +18,11 @@
 //   HOLD             -- locked at q_held_motor via motor PD
 //   FORCE_HOLD       -- maintained grip at q_contact + close_dir*overshoot
 //                       with kp tuned so steady-state torque ~= force_thr
+//   TELEOP_PASSIVE   -- master-side teleop: zero stiffness, friction-only
+//                       feed-forward from measured velocity so fingers can
+//                       back-drive the gripper.
+//   TELEOP_TRACK     -- slave-side teleop: track normalized opening ratio
+//                       from the remote master gripper.
 //   FAILED           -- calibration timed out; controller refuses to move
 //
 // Multi-turn tracking:
@@ -42,6 +47,8 @@
 // ============================================================================
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <usb2can/msg/motor_command_array.hpp>
 #include <usb2can/msg/motor_enable.hpp>
@@ -77,6 +84,8 @@ enum class GState : uint8_t {
   MOVING_CLOSE,
   HOLD,
   FORCE_HOLD,
+  TELEOP_PASSIVE,
+  TELEOP_TRACK,
   FAILED,
 };
 
@@ -91,6 +100,8 @@ static const char * state_str(GState s)
     case GState::MOVING_CLOSE:      return "moving_close";
     case GState::HOLD:              return "hold";
     case GState::FORCE_HOLD:        return "force_hold";
+    case GState::TELEOP_PASSIVE:    return "teleop_passive";
+    case GState::TELEOP_TRACK:      return "teleop_track";
     case GState::FAILED:            return "failed";
   }
   return "?";
@@ -116,6 +127,7 @@ struct Gripper
   double fric_coulomb_neg = 0.0;
   double fric_gain = 0.5;
   double fric_deadband = 0.05;     // rad/s
+  double velocity_filter_alpha = 0.9;
 
   // mechanical wiring: which sign of motor radians = "closing"
   int close_motor_direction = +1;  // +1 or -1
@@ -138,12 +150,17 @@ struct Gripper
   double force_threshold = 1.0;    // Nm default
   int    force_grace_ticks = 30;   // ignore force this many frames after move start
   double force_hold_overshoot = 0.1;  // rad; kp = thr/overshoot in FORCE_HOLD
+  double teleop_track_kp = 5.0;
+  double teleop_track_kd = 0.5;
+  double teleop_track_max_step = 0.20;  // motor rad/tick
+  double teleop_passive_kd = 0.0;
 
   // ---- runtime state (raw motor frame) ----
   bool   has_state = false;
   double raw_pos = 0.0;
   double raw_pos_prev = 0.0;
   double velocity = 0.0;
+  double velocity_filtered = 0.0;
   double torque = 0.0;
   uint8_t err = 0;
   double q_motor = 0.0;            // multi-turn accumulator
@@ -173,6 +190,8 @@ struct Gripper
   // active motion / hold targets
   double q_target = 0.0;           // for MOVING_*, integrated step target
   double q_held  = 0.0;            // for HOLD / FORCE_HOLD anchor
+  double q_teleop_target = 0.0;    // for TELEOP_TRACK
+  double teleop_target_ratio = 0.0;
   double cmd_speed = 0.0;          // signed rad/s of current motion
   double cmd_force_thr = 0.0;      // Nm threshold of current close
 
@@ -197,6 +216,7 @@ public:
     declare_parameter<bool>("friction_compensation_enabled", false);
     declare_parameter<double>("friction_gain", 0.5);
     declare_parameter<double>("friction_deadband", 0.05);
+    declare_parameter<double>("velocity_filter_alpha", 0.9);
 
     // ---- per-arm enable / wiring ----
     declare_parameter<bool>("left_enabled",  true);
@@ -241,8 +261,13 @@ public:
       left_cmd_sub_ = create_subscription<std_msgs::msg::String>(
         "~/left_gripper/command", 10,
         [this](std_msgs::msg::String::SharedPtr m) { on_command(left_, m->data); });
+      left_teleop_target_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "~/left_gripper/teleop_target", 10,
+        [this](std_msgs::msg::Float32::SharedPtr m) { on_teleop_target(left_, m->data); });
       left_status_pub_ = create_publisher<std_msgs::msg::String>(
         "~/left_gripper/status", 10);
+      left_teleop_state_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>(
+        "~/left_gripper/teleop_state", 10);
     }
     if (right_.enabled) {
       right_state_sub_ = create_subscription<usb2can::msg::MotorStateArray>(
@@ -255,8 +280,13 @@ public:
       right_cmd_sub_ = create_subscription<std_msgs::msg::String>(
         "~/right_gripper/command", 10,
         [this](std_msgs::msg::String::SharedPtr m) { on_command(right_, m->data); });
+      right_teleop_target_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "~/right_gripper/teleop_target", 10,
+        [this](std_msgs::msg::Float32::SharedPtr m) { on_teleop_target(right_, m->data); });
       right_status_pub_ = create_publisher<std_msgs::msg::String>(
         "~/right_gripper/status", 10);
+      right_teleop_state_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>(
+        "~/right_gripper/teleop_state", 10);
     }
 
     using namespace std::chrono;
@@ -303,6 +333,10 @@ private:
     declare_parameter<double>(p + "_force_threshold", 1.0);
     declare_parameter<int>   (p + "_force_grace_ticks", 30);
     declare_parameter<double>(p + "_force_hold_overshoot", 0.1);
+    declare_parameter<double>(p + "_teleop_track_kp", 5.0);
+    declare_parameter<double>(p + "_teleop_track_kd", 0.5);
+    declare_parameter<double>(p + "_teleop_track_max_step", 0.20);
+    declare_parameter<double>(p + "_teleop_passive_kd", 0.0);
 
     // ENABLING phase: matches dm_hardware_interface's strategy.
     //   _enable_pub_period_s : how often to re-publish FC (50 Hz default).
@@ -353,9 +387,15 @@ private:
     g.force_threshold = get_parameter(side + "_force_threshold").as_double();
     g.force_grace_ticks = static_cast<int>(get_parameter(side + "_force_grace_ticks").as_int());
     g.force_hold_overshoot = get_parameter(side + "_force_hold_overshoot").as_double();
+    g.teleop_track_kp = get_parameter(side + "_teleop_track_kp").as_double();
+    g.teleop_track_kd = get_parameter(side + "_teleop_track_kd").as_double();
+    g.teleop_track_max_step = get_parameter(side + "_teleop_track_max_step").as_double();
+    g.teleop_passive_kd = get_parameter(side + "_teleop_passive_kd").as_double();
 
     g.fric_gain     = get_parameter("friction_gain").as_double();
     g.fric_deadband = get_parameter("friction_deadband").as_double();
+    g.velocity_filter_alpha = std::clamp(
+      get_parameter("velocity_filter_alpha").as_double(), 0.0, 0.999);
 
     const double pub_p_s = get_parameter(side + "_enable_pub_period_s").as_double();
     const double tout_s  = get_parameter(side + "_enable_timeout_s").as_double();
@@ -488,6 +528,9 @@ private:
     g.raw_pos = now_pos;
     g.raw_pos_prev = now_pos;
     g.velocity = static_cast<double>(ms.velocity);
+    g.velocity_filtered =
+      (1.0 - g.velocity_filter_alpha) * g.velocity +
+      g.velocity_filter_alpha * g.velocity_filtered;
     g.torque   = static_cast<double>(ms.torque);
     g.err      = ms.err;
     g.last_state_stamp = msg.header.stamp;
@@ -506,11 +549,47 @@ private:
     return d;
   }
 
+  static double gripper_ratio(const Gripper & g)
+  {
+    if (!g.calibrated) {
+      return 0.0;
+    }
+    const double denom = g.q_close_motor - g.q_open_motor;
+    if (std::abs(denom) < 1e-6) {
+      return 0.0;
+    }
+    return std::clamp((g.q_motor - g.q_open_motor) / denom, 0.0, 1.0);
+  }
+
+  static double ratio_to_motor(const Gripper & g, double ratio)
+  {
+    const double r = std::clamp(ratio, 0.0, 1.0);
+    return g.q_open_motor + r * (g.q_close_motor - g.q_open_motor);
+  }
+
+  void on_teleop_target(Gripper & g, float ratio)
+  {
+    if (!g.enabled) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!g.calibrated) {
+      return;
+    }
+    g.teleop_target_ratio = std::clamp(static_cast<double>(ratio), 0.0, 1.0);
+    if (g.state == GState::TELEOP_TRACK) {
+      // The control loop will slew-limit q_teleop_target toward this ratio.
+      return;
+    }
+  }
+
   // --------------------------------------------------------------------------
   // User command parser. Grammar:
   //   open
   //   close [force_thr_Nm [speed_rad_s]]
   //   hold
+  //   teleop_passive
+  //   teleop_track [ratio_0_to_1]
   //   calibrate
   // --------------------------------------------------------------------------
   void on_command(Gripper & g, const std::string & raw)
@@ -575,11 +654,38 @@ private:
       g.state = GState::HOLD;
       g.phase_ticks = 0;
       RCLCPP_INFO(get_logger(), "%s gripper -> HOLD @%.3frad", g.side.c_str(), g.q_held);
+    } else if (verb == "teleop_passive") {
+      if (!g.calibrated) {
+        RCLCPP_WARN(get_logger(),
+          "%s gripper not calibrated; ignoring 'teleop_passive'", g.side.c_str());
+        return;
+      }
+      g.state = GState::TELEOP_PASSIVE;
+      g.phase_ticks = 0;
+      RCLCPP_INFO(get_logger(),
+        "%s gripper -> TELEOP_PASSIVE (kp=0, friction from measured velocity)",
+        g.side.c_str());
+    } else if (verb == "teleop_track") {
+      if (!g.calibrated) {
+        RCLCPP_WARN(get_logger(),
+          "%s gripper not calibrated; ignoring 'teleop_track'", g.side.c_str());
+        return;
+      }
+      double ratio = gripper_ratio(g);
+      iss >> ratio;
+      g.teleop_target_ratio = std::clamp(ratio, 0.0, 1.0);
+      g.q_teleop_target = ratio_to_motor(g, g.teleop_target_ratio);
+      g.state = GState::TELEOP_TRACK;
+      g.phase_ticks = 0;
+      RCLCPP_INFO(get_logger(),
+        "%s gripper -> TELEOP_TRACK ratio=%.3f q=%.3frad",
+        g.side.c_str(), g.teleop_target_ratio, g.q_teleop_target);
     } else if (verb == "calibrate") {
       enter_enabling(g);
     } else {
       RCLCPP_WARN(get_logger(),
-        "%s gripper: unknown command '%s' (use open/close/hold/calibrate)",
+        "%s gripper: unknown command '%s' "
+        "(use open/close/hold/teleop_passive/teleop_track/calibrate)",
         g.side.c_str(), verb.c_str());
     }
   }
@@ -752,9 +858,24 @@ private:
         kd = g.hold_kd;
         tau_ff = 0.0;
         break;
+
+      case GState::TELEOP_PASSIVE:
+        pos_cmd = g.q_motor;
+        vel_ff  = 0.0;
+        kp = 0.0;
+        kd = g.teleop_passive_kd;
+        // Match the arm gravity controller's friction convention: use
+        // measured velocity, apply Coulomb+viscous outside deadband.
+        tau_ff = friction_ff(g, g.velocity_filtered);
+        break;
+
+      case GState::TELEOP_TRACK:
+        run_teleop_track(g, pos_cmd, vel_ff, kp, kd, tau_ff);
+        break;
     }
 
     publish_cmd(g, pub, pos_cmd, vel_ff, kp, kd, tau_ff);
+    publish_teleop_state(g);
   }
 
   // --------------------------------------------------------------------------
@@ -885,6 +1006,22 @@ private:
     }
   }
 
+  void run_teleop_track(Gripper & g,
+                        double & pos_cmd, double & vel_ff,
+                        double & kp, double & kd, double & tau_ff)
+  {
+    const double desired = ratio_to_motor(g, g.teleop_target_ratio);
+    const double max_step = std::max(1e-5, g.teleop_track_max_step);
+    const double delta = std::clamp(desired - g.q_teleop_target, -max_step, max_step);
+    g.q_teleop_target += delta;
+
+    pos_cmd = g.q_teleop_target;
+    vel_ff = delta / std::max(1e-6, dt_);
+    kp = g.teleop_track_kp;
+    kd = g.teleop_track_kd;
+    tau_ff = friction_ff(g, vel_ff);
+  }
+
   // --------------------------------------------------------------------------
   // Publish per-motor FC (enable=true) or FD (enable=false) to bridge so the
   // DM motor enters / leaves MIT mode. The bridge translates exactly one
@@ -918,6 +1055,23 @@ private:
     }
     const double coulomb = (v_des > 0.0) ? g.fric_coulomb_pos : -g.fric_coulomb_neg;
     return g.fric_gain * (coulomb + g.fric_viscous * v_des);
+  }
+
+  void publish_teleop_state(const Gripper & g)
+  {
+    const auto pub = (g.side == "left") ? left_teleop_state_pub_ : right_teleop_state_pub_;
+    if (!pub || pub->get_subscription_count() == 0) {
+      return;
+    }
+    std_msgs::msg::Float32MultiArray msg;
+    msg.data.resize(6);
+    msg.data[0] = static_cast<float>(gripper_ratio(g));
+    msg.data[1] = static_cast<float>(g.q_motor);
+    msg.data[2] = static_cast<float>(g.velocity);
+    msg.data[3] = static_cast<float>(g.torque);
+    msg.data[4] = g.calibrated ? 1.0f : 0.0f;
+    msg.data[5] = static_cast<float>(static_cast<int>(g.state));
+    pub->publish(msg);
   }
 
   // --------------------------------------------------------------------------
@@ -960,10 +1114,10 @@ private:
     std::lock_guard<std::mutex> lock(mu_);
     char buf[256];
     std::snprintf(buf, sizeof(buf),
-      "state:%s calibrated:%d q_motor:%.3f raw:%.3f v:%.2f tau:%.2f "
+      "state:%s calibrated:%d ratio:%.3f q_motor:%.3f raw:%.3f v:%.2f vf:%.2f tau:%.2f "
       "open:%.3f close:%.3f stroke:%.3f err:%u",
       state_str(g.state), g.calibrated ? 1 : 0,
-      g.q_motor, g.raw_pos, g.velocity, g.torque,
+      gripper_ratio(g), g.q_motor, g.raw_pos, g.velocity, g.velocity_filtered, g.torque,
       g.q_open_motor, g.q_close_motor, g.stroke_motor,
       static_cast<unsigned>(g.err));
     std_msgs::msg::String m;
@@ -981,12 +1135,16 @@ private:
   rclcpp::Subscription<usb2can::msg::MotorStateArray>::SharedPtr right_state_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr left_cmd_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr right_cmd_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr left_teleop_target_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr right_teleop_target_sub_;
   rclcpp::Publisher<usb2can::msg::MotorCommandArray>::SharedPtr left_cmd_pub_;
   rclcpp::Publisher<usb2can::msg::MotorCommandArray>::SharedPtr right_cmd_pub_;
   rclcpp::Publisher<usb2can::msg::MotorEnableArray>::SharedPtr left_enable_pub_;
   rclcpp::Publisher<usb2can::msg::MotorEnableArray>::SharedPtr right_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr left_status_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr right_status_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr left_teleop_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr right_teleop_state_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
   rclcpp::TimerBase::SharedPtr status_timer_;
 

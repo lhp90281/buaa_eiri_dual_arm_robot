@@ -648,6 +648,8 @@ GUI 快捷键：
 - 对齐完成后主臂切回 `gravity_compensation_controller`
 - 主臂只发送当前关节角度
 - 从臂切到 `joint_position_controller` 并跟踪主臂角度
+- 主臂夹爪切到 `teleop_passive`，只做 DM4310 摩擦补偿，可以用手指推动
+- 从臂夹爪切到 `teleop_track`，按本机标定行程跟踪主臂夹爪开合比例
 
 使用 GUI 时，在 master GUI 按 `T` 会自动执行下面的准备流程。命令行调试时，也可以在主臂主机执行：
 
@@ -726,6 +728,19 @@ src/eiriarm_controllers/config/teleop_joint_gains.yaml
 | `max_runtime_error` | `1.0` | 运行中最大关节误差限制，超过自动 disable |
 | `max_step` | `0.03` | 每个周期目标最大变化量，单位 rad |
 
+夹爪遥操作随 `teleop` 自动启用，仍使用同一个 UDP 频率。夹爪本地控制器当前为 `50 Hz`，主臂 ros2_control 为 `300 Hz`；夹爪没有单独升频。主臂夹爪发送的是归一化开合比例，不是 raw 电机角度，因此两边夹爪标定出的 `q_open/q_close` 可以略有不同。
+
+夹爪摩擦补偿与机械臂重力补偿控制器保持同一口径：
+
+```text
+tau_friction = friction_gain * (sign(v) * coulomb_dir + viscous * v)
+```
+
+- 机械臂使用滤波后的实测关节速度 `v_filtered`
+- 主臂夹爪 `teleop_passive` 使用滤波后的实测 DM4310 速度
+- 两者都在 `|v| <= friction_deadband` 时不给摩擦前馈
+- 两者都只使用 `coulomb_pos`、`coulomb_neg`、`viscous`，不直接使用 `static_pos/static_neg`
+
 示例：
 
 ```bash
@@ -757,6 +772,7 @@ ros2 run eiriarm_controllers teleop_joint_bridge \
 
 - `/teleop/enable` 提示没有 peer joint state：检查 IP、UDP 端口、防火墙、网线
 - 从臂不动：确认从臂本地 `real_robot.launch.py` 已启动，且 `/controller_manager` 可用
+- 夹爪不跟随：确认两边夹爪已经完成启动开合标定，且 `/gripper_controller/*/teleop_state` 有连续输出
 - enable 失败提示误差过大：先重新执行主臂侧 `/teleop/align`
 - UDP 网络正常但 ROS 服务无响应：检查本机是否忘了 `source install/setup.bash`
 
@@ -837,7 +853,23 @@ std_msgs/msg/String
 ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'open'}"
 ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'close'}"
 ros2 topic pub --once /gripper_controller/right_gripper/command std_msgs/msg/String "{data: 'close 1.5 2.0'}"
-ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'stop'}"
+ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'hold'}"
+```
+
+遥操作夹爪命令由 teleop bridge 自动发送，也可以手动调试：
+
+```bash
+# 主臂夹爪：只补偿摩擦，允许手指推动
+ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'teleop_passive'}"
+
+# 从臂夹爪：进入连续比例跟踪
+ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/String "{data: 'teleop_track'}"
+
+# 从臂夹爪目标比例，0.0=open，1.0=close
+ros2 topic pub --once /gripper_controller/left_gripper/teleop_target std_msgs/msg/Float32 "{data: 0.5}"
+
+# 观察夹爪遥操作状态：[ratio, q_motor, velocity, torque, calibrated, state]
+ros2 topic echo /gripper_controller/left_gripper/teleop_state
 ```
 
 键盘控制：

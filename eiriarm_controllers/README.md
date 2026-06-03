@@ -15,7 +15,7 @@ src/eiriarm_bringup/README.md
 - `GravityCompensationController`：重力补偿和摩擦前馈
 - `JointPositionController`：MIT 五参数关节位置控制，订阅 `/joint_position_command`
 - `CartesianPositionControllerPlugin`：双臂笛卡尔目标逆解控制
-- `gripper_controller_node`：独立夹爪控制节点
+- `gripper_controller_node`：独立夹爪控制节点，支持开/合/保持和遥操作 passive/track 模式
 - `teleop_joint_bridge`：双机 UDP 关节遥操作桥
 - `teleop_force_observer`：从臂外力估计观测/记录/绘图脚本
 - `config/teleop_joint_gains.yaml`：实验性力反馈 master/slave 关节位置增益 profile；不建议日常真机使用

@@ -41,6 +41,7 @@ from builtin_interfaces.msg import Duration
 from controller_manager_msgs.srv import ListControllers, SwitchController
 from rcl_interfaces.srv import GetParameters
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float32, Float32MultiArray, String
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -107,6 +108,8 @@ class TeleopJointBridge(Node):
         self._lock = threading.Lock()
         self.local_positions: Optional[List[float]] = None
         self.remote_positions: Optional[List[float]] = None
+        self.local_grippers = {}
+        self.remote_grippers = {}
         self.last_rx_time = 0.0
         self.remote_aligned = False
         self.remote_enabled = False
@@ -136,6 +139,26 @@ class TeleopJointBridge(Node):
             callback_group=self.cb_group)
         self.command_pub = self.create_publisher(
             JointTrajectory, args.command_topic, 10)
+        self.left_gripper_state_sub = self.create_subscription(
+            Float32MultiArray,
+            '/gripper_controller/left_gripper/teleop_state',
+            lambda msg: self._on_gripper_state('left', msg),
+            10,
+            callback_group=self.cb_group)
+        self.right_gripper_state_sub = self.create_subscription(
+            Float32MultiArray,
+            '/gripper_controller/right_gripper/teleop_state',
+            lambda msg: self._on_gripper_state('right', msg),
+            10,
+            callback_group=self.cb_group)
+        self.left_gripper_target_pub = self.create_publisher(
+            Float32, '/gripper_controller/left_gripper/teleop_target', 10)
+        self.right_gripper_target_pub = self.create_publisher(
+            Float32, '/gripper_controller/right_gripper/teleop_target', 10)
+        self.left_gripper_command_pub = self.create_publisher(
+            String, '/gripper_controller/left_gripper/command', 10)
+        self.right_gripper_command_pub = self.create_publisher(
+            String, '/gripper_controller/right_gripper/command', 10)
 
         self.align_srv = self.create_service(
             Trigger, '/teleop/align', self._on_align,
@@ -307,15 +330,24 @@ class TeleopJointBridge(Node):
                     continue
                 if len(names) != len(positions):
                     continue
+                grippers = packet.get('grippers', {})
+                if not isinstance(grippers, dict):
+                    grippers = {}
                 pos_by_name = {
                     str(name): float(pos) for name, pos in zip(names, positions)
                 }
                 mapped = [pos_by_name[name] for name in self.joint_names]
+                mapped_grippers = {}
+                for side in ('left', 'right'):
+                    value = grippers.get(side)
+                    if isinstance(value, (int, float)):
+                        mapped_grippers[side] = max(0.0, min(1.0, float(value)))
             except (ValueError, KeyError, TypeError, UnicodeDecodeError):
                 continue
 
             with self._lock:
                 self.remote_positions = mapped
+                self.remote_grippers = mapped_grippers
                 self.last_rx_time = time.monotonic()
                 self.remote_aligned = bool(packet.get('aligned', False))
                 remote_enabled = bool(packet.get('enabled', False))
@@ -335,6 +367,7 @@ class TeleopJointBridge(Node):
     def _send_state(self):
         with self._lock:
             positions = None if self.local_positions is None else list(self.local_positions)
+            grippers = dict(self.local_grippers)
             aligned = self.aligned
             enabled = self.enabled
             enable_request_seq = self.enable_request_seq
@@ -356,6 +389,7 @@ class TeleopJointBridge(Node):
             'exit_request_seq': exit_request_seq,
             'joint_names': self.joint_names,
             'positions': positions,
+            'grippers': grippers,
         }
         data = json.dumps(packet, separators=(',', ':')).encode('utf-8')
         try:
@@ -381,6 +415,49 @@ class TeleopJointBridge(Node):
             remote_enabled = self.remote_enabled
             peer_enabled_seen = self.peer_enabled_seen
         return local, remote, recent, remote_aligned, remote_enabled, peer_enabled_seen
+
+    def _on_gripper_state(self, side: str, msg: Float32MultiArray):
+        if not msg.data:
+            return
+        ratio = max(0.0, min(1.0, float(msg.data[0])))
+        calibrated = True
+        if len(msg.data) > 4:
+            calibrated = bool(msg.data[4] > 0.5)
+        if not calibrated:
+            return
+        with self._lock:
+            self.local_grippers[side] = ratio
+
+    def _publish_gripper_command(self, side: str, command: str):
+        msg = String()
+        msg.data = command
+        if side == 'left':
+            self.left_gripper_command_pub.publish(msg)
+        else:
+            self.right_gripper_command_pub.publish(msg)
+
+    def _configure_grippers_for_enable(self):
+        if self.role == 'master' and self.mode == 'no_feedback':
+            command = 'teleop_passive'
+        else:
+            command = 'teleop_track'
+        for side in ('left', 'right'):
+            self._publish_gripper_command(side, command)
+
+    def _hold_grippers(self):
+        for side in ('left', 'right'):
+            self._publish_gripper_command(side, 'hold')
+
+    def _publish_gripper_targets(self):
+        with self._lock:
+            targets = dict(self.remote_grippers)
+        for side, ratio in targets.items():
+            msg = Float32()
+            msg.data = float(max(0.0, min(1.0, ratio)))
+            if side == 'left':
+                self.left_gripper_target_pub.publish(msg)
+            elif side == 'right':
+                self.right_gripper_target_pub.publish(msg)
 
     def _wait_for_peer(self, timeout: float):
         deadline = time.monotonic() + max(0.0, timeout)
@@ -464,6 +541,7 @@ class TeleopJointBridge(Node):
             self.enabled = True
             self.last_commanded = list(local)
             self.peer_enabled_seen = remote_enabled
+        self._configure_grippers_for_enable()
         return True, f'teleop enabled role={self.role} mode={self.mode}'
 
     def _request_peer_enable(self):
@@ -489,6 +567,7 @@ class TeleopJointBridge(Node):
             self._publish_trajectory(local, self.args.hold_duration)
         if restore_gravity or (self.mode == 'no_feedback' and self.role == 'master'):
             self._ensure_gravity_controller()
+        self._hold_grippers()
         return True, 'teleop disabled locally; peer will auto-disable after receiving this state'
 
     def _on_disable(self, _req, resp):
@@ -599,6 +678,7 @@ class TeleopJointBridge(Node):
                 self._last_timeout_log = now
             if self.mode == 'force_feedback' or self.role == 'slave':
                 self._publish_trajectory(local, self.args.hold_duration)
+            self._hold_grippers()
             return
 
         if peer_enabled_seen and not remote_enabled:
@@ -609,11 +689,14 @@ class TeleopJointBridge(Node):
                 self._publish_trajectory(local, self.args.hold_duration)
             if self.mode == 'no_feedback' and self.role == 'master':
                 self._ensure_gravity_controller()
+            self._hold_grippers()
             self.get_logger().warn('peer disabled teleop; local teleop disabled')
             return
 
         if self.mode == 'no_feedback' and self.role == 'master':
             return
+
+        self._publish_gripper_targets()
 
         error = _max_abs_delta(local, remote)
         if error > self.args.max_runtime_error:
@@ -623,6 +706,7 @@ class TeleopJointBridge(Node):
             self.get_logger().error(
                 f'joint error {error:.3f} rad exceeds runtime limit '
                 f'{self.args.max_runtime_error:.3f}; teleop disabled')
+            self._hold_grippers()
             return
 
         target = self._limited_target(remote)

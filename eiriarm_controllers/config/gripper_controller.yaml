@@ -28,6 +28,7 @@ gripper_controller:
     friction_model_yaml: "friction_model.yaml"
     friction_gain: 0.5                    # scale of (coulomb + viscous*v) FF
     friction_deadband: 0.05               # rad/s; below this, friction_ff = 0
+    velocity_filter_alpha: 0.9            # 50 Hz low-pass for measured-velocity friction FF
 
     # ---- per-arm enable ----
     left_enabled:  true
@@ -68,6 +69,10 @@ gripper_controller:
     left_force_threshold: 1.0             # Nm; default trigger for FORCE_HOLD on close
     left_force_grace_ticks: 30            # ignore force this many frames after move start
     left_force_hold_overshoot: 0.1        # rad; in FORCE_HOLD, kp = thr/overshoot
+    left_teleop_track_kp: 5.0             # Nm/rad; slave-side gripper position tracking
+    left_teleop_track_kd: 0.5
+    left_teleop_track_max_step: 0.20      # motor rad/tick; target slew at 50 Hz
+    left_teleop_passive_kd: 0.0           # master-side passive damping, usually 0
 
     # ENABLING phase (mirrors dm_hardware_interface for arm motors):
     #   - publish FC at this period (default 50 Hz = 20 ms)
@@ -101,6 +106,10 @@ gripper_controller:
     right_force_threshold: 1.0
     right_force_grace_ticks: 30
     right_force_hold_overshoot: 0.1
+    right_teleop_track_kp: 5.0
+    right_teleop_track_kd: 0.5
+    right_teleop_track_max_step: 0.20
+    right_teleop_passive_kd: 0.0
     right_enable_pub_period_s: 0.02
     right_enable_timeout_s:    5.0
     right_enable_confirm_frames: 5
