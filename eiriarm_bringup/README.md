@@ -112,6 +112,8 @@ ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=false
 | `gripper` | `true` | 是否启动夹爪控制节点 |
 | `offsets_yaml` | `joint_offsets_dual.yaml` | 关节零位和方向标定；相对路径按启动 launch 的当前目录解析 |
 | `friction_model_yaml` | `friction_model.yaml` | 摩擦模型；相对路径按启动 launch 的当前目录解析 |
+| `teleop_role` | `slave` | 关节位置控制增益 profile；`slave` 保持当前较硬跟踪增益，`master` 使用更软的力反馈主臂增益 |
+| `teleop_gains_yaml` | 空 | 自定义 master/slave `kp_gains`、`kd_gains` profile；空值使用包内默认 |
 | `use_gui` | `false` | 是否同时启动 MuJoCo 真机面板 |
 
 示例：
@@ -134,6 +136,9 @@ ros2 launch eiriarm_bringup real_robot.launch.py arms:=left gripper:=false
 
 # 启动重力补偿，并打开 MuJoCo 真机显示/控制面板
 ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
+
+# 力反馈主臂：加载更软的 joint_position_controller 增益
+ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true teleop_role:=master
 ```
 
 关机建议顺序：
@@ -609,7 +614,7 @@ ros2 service call /teleop/align std_srvs/srv/Trigger {}
 ros2 service call /teleop/enable std_srvs/srv/Trigger {}
 ```
 
-停止遥操作：
+停止遥操作，任意一台机器执行即可，另一台会通过 UDP 状态自动停止：
 
 ```bash
 ros2 service call /teleop/disable std_srvs/srv/Trigger {}
@@ -625,6 +630,18 @@ ros2 service call /teleop/disable std_srvs/srv/Trigger {}
 
 启动命令只需要把两边的 `mode` 改成 `force_feedback`。流程仍然是：
 
+力反馈建议主臂控制端加载软增益，从臂保持默认硬增益。这个参数在 `real_robot.launch.py` 启动控制器时生效，修改后需要重启控制端：
+
+```bash
+# 主臂控制端
+ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true teleop_role:=master
+
+# 从臂控制端，teleop_role 默认就是 slave，也可以显式写出
+ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true teleop_role:=slave
+```
+
+然后两边 teleop 节点都使用 `mode:=force_feedback`，再执行：
+
 ```bash
 # 主臂主机
 ros2 service call /teleop/align std_srvs/srv/Trigger {}
@@ -633,7 +650,13 @@ ros2 service call /teleop/align std_srvs/srv/Trigger {}
 ros2 service call /teleop/enable std_srvs/srv/Trigger {}
 ```
 
-力反馈模式首次测试建议降低 `joint_position_controller` 的 `kp_gains`，并从空载、低速、小范围开始。
+默认增益文件在：
+
+```bash
+src/eiriarm_controllers/config/teleop_joint_gains.yaml
+```
+
+力反馈模式首次测试建议从空载、低速、小范围开始。若主臂仍然顶手，继续降低 `master.kp_gains`；若发抖，优先小幅增加 `master.kd_gains` 或降低 `max_step`。
 
 ### 安全参数
 

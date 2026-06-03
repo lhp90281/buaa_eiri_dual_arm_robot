@@ -60,6 +60,8 @@ Argument summary
   friction_model_yaml
                  path to the friction model YAML. Relative paths are resolved
                  from the launch working directory.
+  teleop_role    slave | master. Selects joint-position kp/kd profile.
+                 Default slave keeps the existing stiff tracking gains.
   use_gui        true | false   (start MuJoCo mirror/target-editor panel).
 """
 
@@ -112,6 +114,23 @@ def generate_launch_description():
             ),
         ),
         DeclareLaunchArgument(
+            'teleop_role',
+            default_value='slave',
+            description=(
+                'Joint-position gain profile: slave keeps current stiff '
+                'tracking gains; master loads softer force-feedback gains.'
+            ),
+            choices=['master', 'slave'],
+        ),
+        DeclareLaunchArgument(
+            'teleop_gains_yaml',
+            default_value='',
+            description=(
+                'Optional YAML with master/slave joint_position kp/kd '
+                'profiles. Empty uses the eiriarm_controllers default.'
+            ),
+        ),
+        DeclareLaunchArgument(
             'use_gui',
             default_value='false',
             description='Start MuJoCo mirror/target-editor panel alongside real hardware control',
@@ -136,6 +155,8 @@ def generate_launch_description():
             'gripper':      LaunchConfiguration('gripper'),
             'offsets_yaml': LaunchConfiguration('offsets_yaml'),
             'friction_model_yaml': LaunchConfiguration('friction_model_yaml'),
+            'teleop_role': LaunchConfiguration('teleop_role'),
+            'teleop_gains_yaml': LaunchConfiguration('teleop_gains_yaml'),
         }.items(),
     )
 

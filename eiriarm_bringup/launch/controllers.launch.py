@@ -175,6 +175,8 @@ def _real_launch(controller_type: str):
                 'gripper': LaunchConfiguration('enable_gripper'),
                 'offsets_yaml': LaunchConfiguration('offsets_yaml'),
                 'friction_model_yaml': LaunchConfiguration('friction_model_yaml'),
+                'teleop_role': LaunchConfiguration('teleop_role'),
+                'teleop_gains_yaml': LaunchConfiguration('teleop_gains_yaml'),
             }.items(),
         )
     ]
@@ -229,6 +231,24 @@ def generate_launch_description():
             default_value='gravity_compensation',
             description='Controller type: gravity_compensation, joint_position, or cartesian_position',
             choices=list(_VALID_CONTROLLER_TYPES),
+        ),
+        DeclareLaunchArgument(
+            'teleop_role',
+            default_value='slave',
+            description=(
+                'Real-hardware joint-position gain profile: slave keeps '
+                'current stiff tracking gains; master loads softer '
+                'force-feedback gains.'
+            ),
+            choices=['master', 'slave'],
+        ),
+        DeclareLaunchArgument(
+            'teleop_gains_yaml',
+            default_value='',
+            description=(
+                'Optional YAML with master/slave joint_position kp/kd '
+                'profiles. Empty uses the eiriarm_controllers default.'
+            ),
         ),
         DeclareLaunchArgument(
             'enable_gripper',

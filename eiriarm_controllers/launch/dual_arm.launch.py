@@ -92,6 +92,10 @@ _GC_JOINT_ARRAY_KEYS = ('joints', 'motor_types', 'gravity_gains', 'friction_gain
 # Same idea for joint_position_controller.
 _JP_JOINT_ARRAY_KEYS = ('joints', 'kp_gains', 'kd_gains')
 
+
+_VALID_TELEOP_ROLES = ('master', 'slave')
+
+
 def _resolve_user_path(path: str) -> str:
     """Resolve user-supplied runtime asset paths.
 
@@ -108,7 +112,69 @@ def _resolve_user_path(path: str) -> str:
     return os.path.abspath(path)
 
 
-def _controllers_yaml(src_path: str, arms: str, friction_model_yaml: str) -> str:
+def _validate_gain_profile(
+    profile: dict[str, Any],
+    profile_name: str,
+    n_joints: int,
+) -> tuple[list[float], list[float]]:
+    kp = profile.get('kp_gains')
+    kd = profile.get('kd_gains')
+    if not isinstance(kp, list) or not isinstance(kd, list):
+        raise ValueError(
+            f"teleop gain profile {profile_name!r} must contain "
+            "kp_gains and kd_gains lists")
+    if len(kp) != n_joints or len(kd) != n_joints:
+        raise ValueError(
+            f"teleop gain profile {profile_name!r} has kp/kd lengths "
+            f"{len(kp)}/{len(kd)}, expected {n_joints}")
+    return [float(x) for x in kp], [float(x) for x in kd]
+
+
+def _apply_teleop_gains(
+    cfg: dict[str, Any],
+    teleop_role: str,
+    gains_yaml: str,
+) -> None:
+    """Copy the selected master/slave profile into controller params."""
+    jp = cfg.get('joint_position_controller', {}).get('ros__parameters', {})
+    joints = jp.get('joints', [])
+    if not isinstance(joints, list) or not joints:
+        raise ValueError("joint_position_controller.joints must be a non-empty list")
+
+    with open(gains_yaml, 'r') as f:
+        gains_cfg = yaml.safe_load(f) or {}
+
+    profile_joints = gains_cfg.get('joints')
+    if isinstance(profile_joints, list) and profile_joints != joints:
+        raise ValueError(
+            "teleop_joint_gains.yaml joints must match "
+            "joint_position_controller.joints before arm slicing")
+
+    profiles = gains_cfg.get('profiles', {})
+    if not isinstance(profiles, dict) or teleop_role not in profiles:
+        raise ValueError(
+            f"teleop_role {teleop_role!r} has no matching profile in {gains_yaml}")
+
+    kp, kd = _validate_gain_profile(
+        profiles[teleop_role], teleop_role, len(joints))
+    jp['kp_gains'] = kp
+    jp['kd_gains'] = kd
+
+    # Keep Cartesian gains aligned with joint-space gains when present. This
+    # preserves the existing bumpless joint/cartesian failover behavior.
+    cart = cfg.get('cartesian_position_controller', {}).get('ros__parameters', {})
+    if cart.get('joints') == joints:
+        cart['kp_gains'] = list(kp)
+        cart['kd_gains'] = list(kd)
+
+
+def _controllers_yaml(
+    src_path: str,
+    arms: str,
+    friction_model_yaml: str,
+    teleop_role: str,
+    teleop_gains_yaml: str,
+) -> str:
     """Read the dual-arm controllers yaml, apply runtime path overrides, and
     slice the per-joint arrays for the selected arms when needed.
 
@@ -121,6 +187,8 @@ def _controllers_yaml(src_path: str, arms: str, friction_model_yaml: str) -> str
 
     with open(src_path, 'r') as f:
         cfg: dict[str, Any] = yaml.safe_load(f)
+
+    _apply_teleop_gains(cfg, teleop_role, teleop_gains_yaml)
 
     gc = cfg.get('gravity_compensation_controller', {}).get('ros__parameters', {})
     if friction_model_yaml:
@@ -147,7 +215,8 @@ def _controllers_yaml(src_path: str, arms: str, friction_model_yaml: str) -> str
         cfg.pop('cartesian_position_controller', None)
 
     out_path = os.path.join(
-        tempfile.gettempdir(), f'dual_arm_controllers_{arms}_{os.getpid()}.yaml')
+        tempfile.gettempdir(),
+        f'dual_arm_controllers_{arms}_{teleop_role}_{os.getpid()}.yaml')
     with open(out_path, 'w') as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
     return out_path
@@ -171,6 +240,11 @@ def launch_setup(context, *args, **kwargs):
             f"controller:=cartesian_position requires arms:=dual; got arms:={arms!r}. "
             f"The cartesian_position_controller is a dual-arm coordinator.")
 
+    teleop_role = LaunchConfiguration('teleop_role').perform(context).strip().lower()
+    if teleop_role not in _VALID_TELEOP_ROLES:
+        raise RuntimeError(
+            f"teleop_role must be one of {_VALID_TELEOP_ROLES}; got {teleop_role!r}")
+
     enable_gripper   = LaunchConfiguration('gripper').perform(context).lower() == 'true'
     offsets_yaml = _resolve_user_path(
         LaunchConfiguration('offsets_yaml').perform(context))
@@ -187,7 +261,21 @@ def launch_setup(context, *args, **kwargs):
     src_controllers_yaml = os.path.join(
         FindPackageShare('eiriarm_controllers').perform(context),
         'config', 'dual_arm_controllers.yaml')
-    controllers_yaml = _controllers_yaml(src_controllers_yaml, arms, friction_model_yaml)
+    teleop_gains_yaml_arg = LaunchConfiguration('teleop_gains_yaml').perform(context).strip()
+    teleop_gains_yaml = (
+        _resolve_user_path(teleop_gains_yaml_arg)
+        if teleop_gains_yaml_arg else
+        os.path.join(
+            FindPackageShare('eiriarm_controllers').perform(context),
+            'config',
+            'teleop_joint_gains.yaml')
+    )
+    controllers_yaml = _controllers_yaml(
+        src_controllers_yaml,
+        arms,
+        friction_model_yaml,
+        teleop_role,
+        teleop_gains_yaml)
 
     robot_description = {
         'robot_description': ParameterValue(
@@ -346,6 +434,25 @@ def generate_launch_description():
                 'manual `ros2 control` calls.'
             ),
             choices=list(_VALID_CONTROLLERS),
+        ),
+        DeclareLaunchArgument(
+            'teleop_role',
+            default_value='slave',
+            description=(
+                'Joint-position gain profile to load: slave keeps the '
+                'current stiff tracking gains; master loads softer gains '
+                'for force-feedback operator arms.'
+            ),
+            choices=list(_VALID_TELEOP_ROLES),
+        ),
+        DeclareLaunchArgument(
+            'teleop_gains_yaml',
+            default_value='',
+            description=(
+                'Optional YAML with master/slave joint_position kp/kd '
+                'profiles. Empty uses eiriarm_controllers/config/'
+                'teleop_joint_gains.yaml.'
+            ),
         ),
         DeclareLaunchArgument(
             'gripper',

@@ -110,6 +110,7 @@ class TeleopJointBridge(Node):
         self.last_rx_time = 0.0
         self.remote_aligned = False
         self.remote_enabled = False
+        self.peer_enabled_seen = False
         self.remote_seq = -1
         self.seq = 0
         self.aligned = False
@@ -301,7 +302,10 @@ class TeleopJointBridge(Node):
                 self.remote_positions = mapped
                 self.last_rx_time = time.monotonic()
                 self.remote_aligned = bool(packet.get('aligned', False))
-                self.remote_enabled = bool(packet.get('enabled', False))
+                remote_enabled = bool(packet.get('enabled', False))
+                self.remote_enabled = remote_enabled
+                if remote_enabled:
+                    self.peer_enabled_seen = True
                 self.remote_seq = int(packet.get('seq', -1))
 
     def _send_state(self):
@@ -346,7 +350,9 @@ class TeleopJointBridge(Node):
             remote = None if self.remote_positions is None else list(self.remote_positions)
             recent = self._have_recent_remote_locked(time.monotonic())
             remote_aligned = self.remote_aligned
-        return local, remote, recent, remote_aligned
+            remote_enabled = self.remote_enabled
+            peer_enabled_seen = self.peer_enabled_seen
+        return local, remote, recent, remote_aligned, remote_enabled, peer_enabled_seen
 
     def _publish_trajectory(self, positions: List[float], duration: float):
         traj = JointTrajectory()
@@ -365,7 +371,7 @@ class TeleopJointBridge(Node):
             resp.success = False
             resp.message = 'alignment is only allowed on the master host'
             return resp
-        local, remote, recent, _remote_aligned = self._snapshot()
+        local, remote, recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = self._snapshot()
         if local is None:
             resp.success = False
             resp.message = 'no local /joint_states yet'
@@ -399,7 +405,7 @@ class TeleopJointBridge(Node):
         return resp
 
     def _on_enable(self, _req, resp):
-        local, remote, recent, remote_aligned = self._snapshot()
+        local, remote, recent, remote_aligned, remote_enabled, _peer_enabled_seen = self._snapshot()
         if local is None:
             resp.success = False
             resp.message = 'no local /joint_states yet'
@@ -443,20 +449,22 @@ class TeleopJointBridge(Node):
         with self._lock:
             self.enabled = True
             self.last_commanded = list(local)
+            self.peer_enabled_seen = remote_enabled
         resp.success = True
         resp.message = f'teleop enabled role={self.role} mode={self.mode}'
         return resp
 
     def _on_disable(self, _req, resp):
-        local, _remote, _recent, _remote_aligned = self._snapshot()
+        local, _remote, _recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = self._snapshot()
         with self._lock:
             self.enabled = False
+            self.peer_enabled_seen = False
         if local is not None and (self.mode == 'force_feedback' or self.role == 'slave'):
             self._publish_trajectory(local, self.args.hold_duration)
         if self.mode == 'no_feedback' and self.role == 'master':
             self._ensure_gravity_controller()
         resp.success = True
-        resp.message = 'teleop disabled'
+        resp.message = 'teleop disabled locally; peer will auto-disable after receiving this state'
         return resp
 
     def _limited_target(self, target: List[float]) -> List[float]:
@@ -484,6 +492,8 @@ class TeleopJointBridge(Node):
             local = None if self.local_positions is None else list(self.local_positions)
             remote = None if self.remote_positions is None else list(self.remote_positions)
             recent = self._have_recent_remote_locked(now)
+            remote_enabled = self.remote_enabled
+            peer_enabled_seen = self.peer_enabled_seen
 
         if not enabled:
             return
@@ -498,6 +508,17 @@ class TeleopJointBridge(Node):
                 self._last_timeout_log = now
             if self.mode == 'force_feedback' or self.role == 'slave':
                 self._publish_trajectory(local, self.args.hold_duration)
+            return
+
+        if peer_enabled_seen and not remote_enabled:
+            with self._lock:
+                self.enabled = False
+                self.peer_enabled_seen = False
+            if self.mode == 'force_feedback' or self.role == 'slave':
+                self._publish_trajectory(local, self.args.hold_duration)
+            if self.mode == 'no_feedback' and self.role == 'master':
+                self._ensure_gravity_controller()
+            self.get_logger().warn('peer disabled teleop; local teleop disabled')
             return
 
         if self.mode == 'no_feedback' and self.role == 'master':
