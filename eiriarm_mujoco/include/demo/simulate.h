@@ -203,6 +203,9 @@ class Simulate {
   std::atomic_bool eiriarm_panel_gravity_mode_request = false;
   std::atomic_bool eiriarm_panel_cartesian_mode_request = false;
   std::atomic_bool eiriarm_panel_home_request = false;
+  std::atomic_bool eiriarm_panel_teleop_prepare_request = false;
+  std::atomic_bool eiriarm_panel_teleop_toggle_request = false;
+  std::atomic_bool eiriarm_panel_teleop_exit_request = false;
 
   // loadrequest
   //   3: display a loading message

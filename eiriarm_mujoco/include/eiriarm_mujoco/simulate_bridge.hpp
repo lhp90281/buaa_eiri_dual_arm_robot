@@ -88,6 +88,9 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr jointStatePub_;
     rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectoryPub_;
     rclcpp::Client<controller_manager_msgs::srv::SwitchController>::SharedPtr switchControllerClient_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr teleopPrepareClient_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr teleopToggleClient_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr teleopExitClient_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> worldFramePub_;
 
     sensor_msgs::msg::JointState jointCommands_;
@@ -119,6 +122,9 @@ private:
         const std::vector<std::string>& activate,
         const std::vector<std::string>& deactivate,
         const std::string& label);
+    bool RequestTriggerService_(
+        const rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr& client,
+        const std::string& label);
     bool PublishHomeTrajectory_();
     void WriteJointStateToModel_(size_t joint_idx, double position, double velocity);
     void JointCommandSubCallBack(const sensor_msgs::msg::JointState::SharedPtr jointCommand);
@@ -148,6 +154,9 @@ public:
     std::string SwitchToGravity();
     std::string SwitchToCartesianPosition();
     std::string GoHome();
+    std::string TeleopPrepare();
+    std::string TeleopToggle();
+    std::string TeleopExit();
     void ProcessPanelTick();
     bool PhysicsEnabled() const {return panelMode_ == PanelMode::Simulate;};
 

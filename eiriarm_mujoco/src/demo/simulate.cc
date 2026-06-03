@@ -1378,6 +1378,21 @@ void UiEvent(mjuiState* state) {
     case 'c':
       sim->eiriarm_panel_cancel_edit_request.store(true);
       return;
+
+    case 'T':
+    case 't':
+      sim->eiriarm_panel_teleop_prepare_request.store(true);
+      return;
+
+    case 'Y':
+    case 'y':
+      sim->eiriarm_panel_teleop_toggle_request.store(true);
+      return;
+
+    case 'U':
+    case 'u':
+      sim->eiriarm_panel_teleop_exit_request.store(true);
+      return;
     }
   }
 

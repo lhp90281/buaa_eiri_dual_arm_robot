@@ -93,6 +93,12 @@ SimulateBridge::SimulateBridge(mjData* d, mjModel* m, mujoco::Simulate& sim) : N
         switchControllerClient_ =
             this->create_client<controller_manager_msgs::srv::SwitchController>(
                 "/controller_manager/switch_controller");
+        teleopPrepareClient_ =
+            this->create_client<std_srvs::srv::Trigger>("/teleop/prepare");
+        teleopToggleClient_ =
+            this->create_client<std_srvs::srv::Trigger>("/teleop/toggle");
+        teleopExitClient_ =
+            this->create_client<std_srvs::srv::Trigger>("/teleop/exit");
         startEditServer_ = this->create_service<std_srvs::srv::Trigger>(
             "/mujoco_panel/start_edit",
             std::bind(&SimulateBridge::StartEditServiceCallBack, this, _1, _2)
@@ -182,6 +188,38 @@ bool SimulateBridge::RequestControllerSwitch_(
                 RCLCPP_INFO(logger, "controller switch OK: %s", label.c_str());
             } else {
                 RCLCPP_WARN(logger, "controller switch failed: %s", label.c_str());
+            }
+        });
+    return true;
+}
+
+bool SimulateBridge::RequestTriggerService_(
+    const rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr& client,
+    const std::string& label)
+{
+    if(PhysicsEnabled()) return false;
+    if(!client) return false;
+    if(!client->service_is_ready() &&
+       !client->wait_for_service(std::chrono::milliseconds(100))) {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "%s service is not available; is teleop:=true set in real_robot.launch.py?",
+            label.c_str());
+        return false;
+    }
+
+    auto req = std::make_shared<std_srvs::srv::Trigger::Request>();
+    client->async_send_request(
+        req,
+        [logger = this->get_logger(), label](
+            rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+            const auto resp = future.get();
+            if(resp && resp->success) {
+                RCLCPP_INFO(logger, "%s OK: %s", label.c_str(), resp->message.c_str());
+            } else if(resp) {
+                RCLCPP_WARN(logger, "%s failed: %s", label.c_str(), resp->message.c_str());
+            } else {
+                RCLCPP_WARN(logger, "%s failed: no response", label.c_str());
             }
         });
     return true;
@@ -467,6 +505,36 @@ std::string SimulateBridge::GoHome()
     pendingHomePublish_ = true;
     homePublishAt_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     return "OK: requested home trajectory after joint_position_controller switch";
+}
+
+std::string SimulateBridge::TeleopPrepare()
+{
+    if(PhysicsEnabled()) return "ERROR: teleop prepare is unavailable in simulation mode";
+    editMode_ = false;
+    autoFreezeOnFirstRealState_ = false;
+    const bool requested = RequestTriggerService_(teleopPrepareClient_, "teleop prepare");
+    return requested ? "OK: requested teleop prepare/alignment"
+                     : "ERROR: failed to request teleop prepare/alignment";
+}
+
+std::string SimulateBridge::TeleopToggle()
+{
+    if(PhysicsEnabled()) return "ERROR: teleop toggle is unavailable in simulation mode";
+    editMode_ = false;
+    autoFreezeOnFirstRealState_ = false;
+    const bool requested = RequestTriggerService_(teleopToggleClient_, "teleop toggle");
+    return requested ? "OK: requested teleop enable/disable toggle"
+                     : "ERROR: failed to request teleop enable/disable toggle";
+}
+
+std::string SimulateBridge::TeleopExit()
+{
+    if(PhysicsEnabled()) return "ERROR: teleop exit is unavailable in simulation mode";
+    editMode_ = false;
+    autoFreezeOnFirstRealState_ = false;
+    const bool requested = RequestTriggerService_(teleopExitClient_, "teleop exit");
+    return requested ? "OK: requested teleop exit"
+                     : "ERROR: failed to request teleop exit";
 }
 
 void SimulateBridge::ProcessPanelTick()

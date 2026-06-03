@@ -111,11 +111,18 @@ class TeleopJointBridge(Node):
         self.remote_aligned = False
         self.remote_enabled = False
         self.peer_enabled_seen = False
+        self.remote_enable_request_seq = 0
+        self.remote_exit_request_seq = 0
         self.remote_seq = -1
         self.seq = 0
+        self.enable_request_seq = 0
+        self.exit_request_seq = 0
         self.aligned = False
         self.enabled = False
         self.last_commanded: Optional[List[float]] = None
+        self.pending_peer_enable = False
+        self.pending_peer_exit = False
+        self._last_peer_enable_log = 0.0
         self._last_timeout_log = 0.0
 
         qos = QoSProfile(depth=10)
@@ -138,6 +145,15 @@ class TeleopJointBridge(Node):
             callback_group=self.cb_group)
         self.disable_srv = self.create_service(
             Trigger, '/teleop/disable', self._on_disable,
+            callback_group=self.cb_group)
+        self.prepare_srv = self.create_service(
+            Trigger, '/teleop/prepare', self._on_prepare,
+            callback_group=self.cb_group)
+        self.toggle_srv = self.create_service(
+            Trigger, '/teleop/toggle', self._on_toggle,
+            callback_group=self.cb_group)
+        self.exit_srv = self.create_service(
+            Trigger, '/teleop/exit', self._on_exit,
             callback_group=self.cb_group)
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -306,6 +322,14 @@ class TeleopJointBridge(Node):
                 self.remote_enabled = remote_enabled
                 if remote_enabled:
                     self.peer_enabled_seen = True
+                remote_enable_request_seq = int(packet.get('enable_request_seq', 0))
+                if remote_enable_request_seq > self.remote_enable_request_seq:
+                    self.remote_enable_request_seq = remote_enable_request_seq
+                    self.pending_peer_enable = True
+                remote_exit_request_seq = int(packet.get('exit_request_seq', 0))
+                if remote_exit_request_seq > self.remote_exit_request_seq:
+                    self.remote_exit_request_seq = remote_exit_request_seq
+                    self.pending_peer_exit = True
                 self.remote_seq = int(packet.get('seq', -1))
 
     def _send_state(self):
@@ -313,6 +337,8 @@ class TeleopJointBridge(Node):
             positions = None if self.local_positions is None else list(self.local_positions)
             aligned = self.aligned
             enabled = self.enabled
+            enable_request_seq = self.enable_request_seq
+            exit_request_seq = self.exit_request_seq
             self.seq += 1
             seq = self.seq
         if positions is None:
@@ -326,6 +352,8 @@ class TeleopJointBridge(Node):
             'stamp': time.time(),
             'aligned': aligned,
             'enabled': enabled,
+            'enable_request_seq': enable_request_seq,
+            'exit_request_seq': exit_request_seq,
             'joint_names': self.joint_names,
             'positions': positions,
         }
@@ -354,6 +382,16 @@ class TeleopJointBridge(Node):
             peer_enabled_seen = self.peer_enabled_seen
         return local, remote, recent, remote_aligned, remote_enabled, peer_enabled_seen
 
+    def _wait_for_peer(self, timeout: float):
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() <= deadline:
+            snap = self._snapshot()
+            local, remote, recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = snap
+            if local is not None and remote is not None and recent:
+                return snap
+            time.sleep(0.05)
+        return self._snapshot()
+
     def _publish_trajectory(self, positions: List[float], duration: float):
         traj = JointTrajectory()
         traj.joint_names = list(self.joint_names)
@@ -366,105 +404,133 @@ class TeleopJointBridge(Node):
         with self._lock:
             self.last_commanded = list(positions)
 
-    def _on_align(self, _req, resp):
+    def _align_master(self):
         if self.role != 'master':
-            resp.success = False
-            resp.message = 'alignment is only allowed on the master host'
-            return resp
+            return False, 'alignment is only allowed on the master host'
         local, remote, recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = self._snapshot()
         if local is None:
-            resp.success = False
-            resp.message = 'no local /joint_states yet'
-            return resp
+            return False, 'no local /joint_states yet'
         if remote is None or not recent:
-            resp.success = False
-            resp.message = 'no recent peer joint state'
-            return resp
+            return False, 'no recent peer joint state'
 
         self.get_logger().info(
             f'aligning master to slave over {self.args.align_duration:.2f}s')
         if not self._ensure_position_controller():
-            resp.success = False
-            resp.message = 'failed to switch master to joint_position_controller'
-            return resp
+            return False, 'failed to switch master to joint_position_controller'
 
         self._publish_trajectory(remote, self.args.align_duration)
         time.sleep(self.args.align_duration + self.args.align_settle)
 
         if self.mode == 'no_feedback':
             if not self._ensure_gravity_controller():
-                resp.success = False
-                resp.message = 'aligned, but failed to restore master gravity mode'
-                return resp
+                return False, 'aligned, but failed to restore master gravity mode'
 
         with self._lock:
             self.aligned = True
             self.enabled = False
-        resp.success = True
-        resp.message = 'alignment complete; call /teleop/enable on both hosts'
+        return True, 'alignment complete; call /teleop/enable or /teleop/toggle'
+
+    def _on_align(self, _req, resp):
+        resp.success, resp.message = self._align_master()
         return resp
 
-    def _on_enable(self, _req, resp):
+    def _enable_local(self):
         local, remote, recent, remote_aligned, remote_enabled, _peer_enabled_seen = self._snapshot()
         if local is None:
-            resp.success = False
-            resp.message = 'no local /joint_states yet'
-            return resp
+            return False, 'no local /joint_states yet'
         if remote is None or not recent:
-            resp.success = False
-            resp.message = 'no recent peer joint state'
-            return resp
+            return False, 'no recent peer joint state'
         if self.role == 'master' and not self.aligned:
-            resp.success = False
-            resp.message = 'run /teleop/align on master before enabling'
-            return resp
+            return False, 'run /teleop/align or /teleop/prepare on master before enabling'
         if self.role == 'slave' and not remote_aligned:
-            resp.success = False
-            resp.message = 'master has not reported alignment complete'
-            return resp
+            return False, 'master has not reported alignment complete'
         error = _max_abs_delta(local, remote)
         if error > self.args.max_start_error:
-            resp.success = False
-            resp.message = (
+            return False, (
                 f'local/peer joint error {error:.3f} rad exceeds '
                 f'{self.args.max_start_error:.3f} rad')
-            return resp
 
         if self.mode == 'force_feedback':
             if not self._ensure_position_controller():
-                resp.success = False
-                resp.message = 'failed to switch to joint_position_controller'
-                return resp
+                return False, 'failed to switch to joint_position_controller'
         elif self.role == 'slave':
             if not self._ensure_position_controller():
-                resp.success = False
-                resp.message = 'failed to switch slave to joint_position_controller'
-                return resp
+                return False, 'failed to switch slave to joint_position_controller'
         else:
             if not self._ensure_gravity_controller():
-                resp.success = False
-                resp.message = 'failed to switch master to gravity mode'
-                return resp
+                return False, 'failed to switch master to gravity mode'
 
         with self._lock:
             self.enabled = True
             self.last_commanded = list(local)
             self.peer_enabled_seen = remote_enabled
-        resp.success = True
-        resp.message = f'teleop enabled role={self.role} mode={self.mode}'
+        return True, f'teleop enabled role={self.role} mode={self.mode}'
+
+    def _request_peer_enable(self):
+        with self._lock:
+            self.enable_request_seq += 1
+
+    def _request_peer_exit(self):
+        with self._lock:
+            self.exit_request_seq += 1
+
+    def _on_enable(self, _req, resp):
+        resp.success, resp.message = self._enable_local()
+        if resp.success:
+            self._request_peer_enable()
         return resp
 
-    def _on_disable(self, _req, resp):
+    def _disable_local(self, restore_gravity: bool = False):
         local, _remote, _recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = self._snapshot()
         with self._lock:
             self.enabled = False
             self.peer_enabled_seen = False
         if local is not None and (self.mode == 'force_feedback' or self.role == 'slave'):
             self._publish_trajectory(local, self.args.hold_duration)
-        if self.mode == 'no_feedback' and self.role == 'master':
+        if restore_gravity or (self.mode == 'no_feedback' and self.role == 'master'):
             self._ensure_gravity_controller()
-        resp.success = True
-        resp.message = 'teleop disabled locally; peer will auto-disable after receiving this state'
+        return True, 'teleop disabled locally; peer will auto-disable after receiving this state'
+
+    def _on_disable(self, _req, resp):
+        resp.success, resp.message = self._disable_local(restore_gravity=False)
+        return resp
+
+    def _on_prepare(self, _req, resp):
+        local, remote, recent, _remote_aligned, _remote_enabled, _peer_enabled_seen = (
+            self._wait_for_peer(self.args.prepare_timeout))
+        if local is None:
+            resp.success = False
+            resp.message = 'no local /joint_states yet'
+            return resp
+        if remote is None or not recent:
+            resp.success = False
+            resp.message = (
+                f'peer not ready within {self.args.prepare_timeout:.1f}s; '
+                'check peer_host, UDP ports, firewall, and peer launch')
+            return resp
+        if self.role == 'master':
+            resp.success, resp.message = self._align_master()
+        else:
+            resp.success = True
+            resp.message = 'peer detected; waiting for master alignment'
+        return resp
+
+    def _on_toggle(self, _req, resp):
+        with self._lock:
+            enabled = self.enabled
+        if enabled:
+            resp.success, resp.message = self._disable_local(restore_gravity=False)
+        else:
+            resp.success, resp.message = self._enable_local()
+            if resp.success:
+                self._request_peer_enable()
+        return resp
+
+    def _on_exit(self, _req, resp):
+        resp.success, resp.message = self._disable_local(restore_gravity=True)
+        self._request_peer_exit()
+        if resp.success:
+            resp.message = 'teleop exited locally; peer will exit after receiving this state'
         return resp
 
     def _limited_target(self, target: List[float]) -> List[float]:
@@ -494,6 +560,31 @@ class TeleopJointBridge(Node):
             recent = self._have_recent_remote_locked(now)
             remote_enabled = self.remote_enabled
             peer_enabled_seen = self.peer_enabled_seen
+            pending_peer_enable = self.pending_peer_enable
+            pending_peer_exit = self.pending_peer_exit
+
+        if pending_peer_exit:
+            with self._lock:
+                self.pending_peer_exit = False
+            ok, message = self._disable_local(restore_gravity=True)
+            if ok:
+                self.get_logger().info('peer requested teleop exit; local teleop exited')
+            else:
+                self.get_logger().warn(
+                    f'peer requested teleop exit but local exit failed: {message}')
+            return
+
+        if pending_peer_enable and not enabled:
+            ok, message = self._enable_local()
+            if ok:
+                with self._lock:
+                    self.pending_peer_enable = False
+                enabled = True
+                local, remote, recent, _remote_aligned, remote_enabled, peer_enabled_seen = self._snapshot()
+                self.get_logger().info('peer requested teleop enable; local teleop enabled')
+            elif now - self._last_peer_enable_log > 1.0:
+                self.get_logger().warn(f'peer enable request pending: {message}')
+                self._last_peer_enable_log = now
 
         if not enabled:
             return
@@ -565,6 +656,8 @@ def parse_args(argv):
                    help='peer timeout seconds before auto-disable')
     p.add_argument('--align-duration', type=float, default=5.0)
     p.add_argument('--align-settle', type=float, default=0.2)
+    p.add_argument('--prepare-timeout', type=float, default=30.0,
+                   help='seconds /teleop/prepare waits for peer UDP state')
     p.add_argument('--command-duration', type=float, default=0.08,
                    help='time_from_start for streaming setpoints')
     p.add_argument('--hold-duration', type=float, default=0.2)
@@ -583,6 +676,8 @@ def parse_args(argv):
     p.add_argument('--joints', nargs='*', default=None,
                    help='optional explicit joint list; default queries controller')
     args = p.parse_args(argv)
+    if not args.peer_host:
+        p.error('--peer-host is required')
     if args.rate_hz <= 0.0:
         p.error('--rate-hz must be > 0')
     if args.timeout <= 0.0:
@@ -591,6 +686,8 @@ def parse_args(argv):
         p.error('--local-port and --peer-port must be positive')
     if args.align_duration <= 0.0:
         p.error('--align-duration must be > 0')
+    if args.prepare_timeout <= 0.0:
+        p.error('--prepare-timeout must be > 0')
     if args.max_step <= 0.0:
         p.error('--max-step must be > 0')
     return args

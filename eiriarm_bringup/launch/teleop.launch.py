@@ -55,6 +55,11 @@ def generate_launch_description():
             description='Master-to-slave alignment ramp duration, seconds',
         ),
         DeclareLaunchArgument(
+            'prepare_timeout',
+            default_value='30.0',
+            description='Seconds /teleop/prepare waits for peer UDP state',
+        ),
+        DeclareLaunchArgument(
             'timeout',
             default_value='0.3',
             description='Peer UDP timeout before auto-disable, seconds',
@@ -90,6 +95,7 @@ def generate_launch_description():
             '--peer-port', LaunchConfiguration('peer_port'),
             '--rate-hz', LaunchConfiguration('rate_hz'),
             '--align-duration', LaunchConfiguration('align_duration'),
+            '--prepare-timeout', LaunchConfiguration('prepare_timeout'),
             '--timeout', LaunchConfiguration('timeout'),
             '--max-start-error', LaunchConfiguration('max_start_error'),
             '--max-runtime-error', LaunchConfiguration('max_runtime_error'),

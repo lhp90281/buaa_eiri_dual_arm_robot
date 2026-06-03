@@ -268,6 +268,24 @@ void PhysicsLoop(mj::Simulate& sim) {
                 "%s",
                 SimulateBridgeNodePtr->GoHome().c_str());
           }
+          if (sim.eiriarm_panel_teleop_prepare_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->TeleopPrepare().c_str());
+          }
+          if (sim.eiriarm_panel_teleop_toggle_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->TeleopToggle().c_str());
+          }
+          if (sim.eiriarm_panel_teleop_exit_request.exchange(false)) {
+            RCLCPP_INFO(
+                SimulateBridgeNodePtr->get_logger(),
+                "%s",
+                SimulateBridgeNodePtr->TeleopExit().c_str());
+          }
           SimulateBridgeNodePtr->ProcessPanelTick();
         }
 

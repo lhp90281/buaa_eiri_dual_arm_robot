@@ -18,7 +18,7 @@ src/eiriarm_bringup/README.md
 - `gripper_controller_node`：独立夹爪控制节点
 - `teleop_joint_bridge`：双机 UDP 关节遥操作桥
 - `teleop_force_observer`：从臂外力估计观测/记录/绘图脚本
-- `config/teleop_joint_gains.yaml`：力反馈 master/slave 关节位置增益 profile
+- `config/teleop_joint_gains.yaml`：实验性力反馈 master/slave 关节位置增益 profile；不建议日常真机使用
 - `go_home`、`teach_replay`、`joint_zero_calibration`、`zero_at_current_pose` 等工具脚本
 
 注意：本包不提供运动规划。笛卡尔控制器只对目标位姿做 IK，并把结果作为关节目标插值执行；它不做碰撞检测、避障或路径搜索。

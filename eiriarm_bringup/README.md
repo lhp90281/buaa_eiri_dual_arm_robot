@@ -112,9 +112,14 @@ ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=false
 | `gripper` | `true` | 是否启动夹爪控制节点 |
 | `offsets_yaml` | `joint_offsets_dual.yaml` | 关节零位和方向标定；相对路径按启动 launch 的当前目录解析 |
 | `friction_model_yaml` | `friction_model.yaml` | 摩擦模型；相对路径按启动 launch 的当前目录解析 |
-| `teleop_role` | `slave` | 关节位置控制增益 profile；`slave` 保持当前较硬跟踪增益，`master` 使用更软的力反馈主臂增益 |
+| `teleop_role` | `slave` | 遥操作关节位置控制增益 profile；主要保留给实验性 `force_feedback` 调试，日常无力反馈遥操作保持默认即可 |
 | `teleop_gains_yaml` | 空 | 自定义 master/slave `kp_gains`、`kd_gains` profile；空值使用包内默认 |
 | `use_gui` | `false` | 是否同时启动 MuJoCo 真机面板 |
+| `teleop` | `false` | 是否同时启动 UDP 遥操作桥 |
+| `teleop_node_role` | `slave` | 本机遥操作角色：`master` 或 `slave` |
+| `teleop_peer_host` | 空 | 对端主机 IP；`teleop:=true` 时必须设置 |
+| `teleop_local_port` | `15000` | 本机 UDP 接收端口 |
+| `teleop_peer_port` | `15001` | 对端 UDP 接收端口 |
 
 示例：
 
@@ -137,7 +142,25 @@ ros2 launch eiriarm_bringup real_robot.launch.py arms:=left gripper:=false
 # 启动重力补偿，并打开 MuJoCo 真机显示/控制面板
 ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
 
-# 力反馈主臂：加载更软的 joint_position_controller 增益
+# 主臂：启动真机、GUI 和无力反馈遥操作桥
+ros2 launch eiriarm_bringup real_robot.launch.py \
+  use_gui:=true \
+  teleop:=true \
+  teleop_node_role:=master \
+  teleop_peer_host:=192.168.10.20 \
+  teleop_local_port:=15000 \
+  teleop_peer_port:=15001
+
+# 从臂：启动真机、GUI 和无力反馈遥操作桥
+ros2 launch eiriarm_bringup real_robot.launch.py \
+  use_gui:=true \
+  teleop:=true \
+  teleop_node_role:=slave \
+  teleop_peer_host:=192.168.10.10 \
+  teleop_local_port:=15001 \
+  teleop_peer_port:=15000
+
+# 实验性力反馈主臂调试：加载更软的 joint_position_controller 增益，不建议日常使用
 ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true teleop_role:=master
 ```
 
@@ -548,19 +571,15 @@ ros2 launch eiriarm_bringup mujoco_panel.launch.py trajectory_duration:=8.0
 
 ### 启动拓扑
 
-每台机器仍按真机流程先启动本机硬件：
+每台机器仍按真机流程先启动本机 CAN bridge：
 
 ```bash
 # 每台机器终端 1
 source install/setup.bash
 ros2 launch eiriarm_bringup bridge.launch.py
-
-# 每台机器终端 2，推荐打开 GUI
-source install/setup.bash
-ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
 ```
 
-然后每台机器再启动一个遥操作节点。假设：
+然后每台机器用一个 `real_robot.launch.py` 同时启动控制器、GUI 和遥操作桥。假设：
 
 - 主臂主机 IP：`192.168.10.10`
 - 从臂主机 IP：`192.168.10.20`
@@ -571,27 +590,55 @@ ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true
 
 ```bash
 source install/setup.bash
-ros2 launch eiriarm_bringup teleop.launch.py \
-  role:=master \
-  mode:=no_feedback \
-  peer_host:=192.168.10.20 \
-  local_port:=15000 \
-  peer_port:=15001
+ros2 launch eiriarm_bringup real_robot.launch.py \
+  use_gui:=true \
+  teleop:=true \
+  teleop_node_role:=master \
+  teleop_mode:=no_feedback \
+  teleop_peer_host:=192.168.10.20 \
+  teleop_local_port:=15000 \
+  teleop_peer_port:=15001
 ```
 
 从臂主机：
 
 ```bash
 source install/setup.bash
-ros2 launch eiriarm_bringup teleop.launch.py \
-  role:=slave \
-  mode:=no_feedback \
-  peer_host:=192.168.10.10 \
-  local_port:=15001 \
-  peer_port:=15000
+ros2 launch eiriarm_bringup real_robot.launch.py \
+  use_gui:=true \
+  teleop:=true \
+  teleop_node_role:=slave \
+  teleop_mode:=no_feedback \
+  teleop_peer_host:=192.168.10.10 \
+  teleop_local_port:=15001 \
+  teleop_peer_port:=15000
 ```
 
 如果两边使用同一个端口也可以，例如都用 `local_port:=15000 peer_port:=15000`，只要防火墙允许 UDP 端口互通。
+
+GUI 快捷键：
+
+| 按键 | 作用 |
+|---|---|
+| `T` | 准备遥操作；master 会等待对端 UDP 状态，然后自动对齐到 slave 当前姿态 |
+| `Y` | enable/disable 遥操作；enable 请求会通过 UDP 同步给对端 |
+| `U` | 退出遥操作；两边停止遥操作并尽量恢复重力补偿 |
+| `J` | 切到关节位置控制器 |
+| `G` | 切到重力补偿控制器 |
+| `K` | 切到笛卡尔逆解控制器 |
+| `H` | 回零 |
+| `E` | 进入 MuJoCo slider 编辑 |
+| `S` | 下发 MuJoCo slider 目标 |
+| `C` | 取消 slider 编辑 |
+
+推荐流程：
+
+1. 两边都启动 `bridge.launch.py`
+2. 两边都启动上面的 `real_robot.launch.py ... teleop:=true use_gui:=true`
+3. 在 master GUI 按 `T`，等待主臂自动对齐从臂
+4. 在任意一边 GUI 按 `Y` 开始遥操作
+5. 再按 `Y` 暂停遥操作并保持当前位置
+6. 按 `U` 退出遥操作并恢复重力补偿
 
 ### 无力反馈模式
 
@@ -602,16 +649,16 @@ ros2 launch eiriarm_bringup teleop.launch.py \
 - 主臂只发送当前关节角度
 - 从臂切到 `joint_position_controller` 并跟踪主臂角度
 
-启动两个 teleop 节点后，在主臂主机执行：
+使用 GUI 时，在 master GUI 按 `T` 会自动执行下面的准备流程。命令行调试时，也可以在主臂主机执行：
 
 ```bash
-ros2 service call /teleop/align std_srvs/srv/Trigger {}
+ros2 service call /teleop/prepare std_srvs/srv/Trigger {}
 ```
 
-等待返回成功后，两台机器都执行 enable：
+等待返回成功后，可以按 `Y`，或者手动执行：
 
 ```bash
-ros2 service call /teleop/enable std_srvs/srv/Trigger {}
+ros2 service call /teleop/toggle std_srvs/srv/Trigger {}
 ```
 
 停止遥操作，任意一台机器执行即可，另一台会通过 UDP 状态自动停止：
@@ -620,17 +667,26 @@ ros2 service call /teleop/enable std_srvs/srv/Trigger {}
 ros2 service call /teleop/disable std_srvs/srv/Trigger {}
 ```
 
-### 力反馈模式
+退出遥操作并恢复重力补偿：
 
-`mode:=force_feedback`：
+```bash
+ros2 service call /teleop/exit std_srvs/srv/Trigger {}
+```
+
+### 力反馈模式（实验性，不建议使用）
+
+`mode:=force_feedback` 当前只保留为实验入口，不建议在真机上作为常规遥操作模式使用。推荐日常遥操作使用 `mode:=no_feedback`。
 
 - 主臂和从臂都使用 `joint_position_controller`
 - 两边互相把对端关节角作为本机目标
 - 这是位置耦合式力反馈，不是基于力矩传感器的真实力反馈
+- 无外力时也可能因为微小跟踪误差、网络延迟、编码器噪声和 `kp/kd` 放大而产生明显阻力或顿挫
+- 死区和主从不同增益只能缓解部分问题，暂时还达不到“无外力丝滑、有外力反馈明显”的状态
+- 基于电机反馈扭矩的外力估计仍处在记录和评估阶段，尚未接入闭环
 
-启动命令只需要把两边的 `mode` 改成 `force_feedback`。流程仍然是：
+如果需要做对比实验，启动命令只需要把两边的 `mode` 改成 `force_feedback`。流程仍然是：
 
-力反馈建议主臂控制端加载软增益，从臂保持默认硬增益。这个参数在 `real_robot.launch.py` 启动控制器时生效，修改后需要重启控制端：
+实验时建议主臂控制端加载软增益，从臂保持默认硬增益。这个参数在 `real_robot.launch.py` 启动控制器时生效，修改后需要重启控制端：
 
 ```bash
 # 主臂控制端
@@ -644,10 +700,10 @@ ros2 launch eiriarm_bringup real_robot.launch.py use_gui:=true teleop_role:=slav
 
 ```bash
 # 主臂主机
-ros2 service call /teleop/align std_srvs/srv/Trigger {}
+ros2 service call /teleop/prepare std_srvs/srv/Trigger {}
 
-# 两台机器
-ros2 service call /teleop/enable std_srvs/srv/Trigger {}
+# 任意一台机器
+ros2 service call /teleop/toggle std_srvs/srv/Trigger {}
 ```
 
 默认增益文件在：
@@ -656,7 +712,7 @@ ros2 service call /teleop/enable std_srvs/srv/Trigger {}
 src/eiriarm_controllers/config/teleop_joint_gains.yaml
 ```
 
-力反馈模式首次测试建议从空载、低速、小范围开始。当前力反馈仍是关节位置互相跟踪，手感不等价于真实外力反馈；如果手感发硬或抖动，优先降低主臂/从臂 `kp_gains`、调整 `kd_gains`，或降低 `max_step`。
+力反馈模式如果继续实验，只建议空载、低速、小范围测试。当前实现手感不等价于真实外力反馈；如果出现发硬、抖动或顿挫，应立即 disable，并回到 `no_feedback` 模式。
 
 ### 安全参数
 
@@ -665,6 +721,7 @@ src/eiriarm_controllers/config/teleop_joint_gains.yaml
 | `rate_hz` | `50.0` | UDP 状态交换和目标下发频率 |
 | `timeout` | `0.3` | 超过该时间没收到对端 UDP 包会自动 disable |
 | `align_duration` | `5.0` | 主臂对齐从臂的插值时间 |
+| `prepare_timeout` | `30.0` | `/teleop/prepare` 等待对端 UDP 状态的时间 |
 | `max_start_error` | `0.5` | enable 前两边最大关节误差限制，单位 rad |
 | `max_runtime_error` | `1.0` | 运行中最大关节误差限制，超过自动 disable |
 | `max_step` | `0.03` | 每个周期目标最大变化量，单位 rad |
@@ -679,6 +736,7 @@ ros2 launch eiriarm_bringup teleop.launch.py \
   local_port:=15001 \
   peer_port:=15000 \
   rate_hz:=30 \
+  prepare_timeout:=30 \
   max_step:=0.015
 ```
 

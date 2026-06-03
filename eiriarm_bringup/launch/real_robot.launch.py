@@ -61,7 +61,12 @@ Argument summary
                  path to the friction model YAML. Relative paths are resolved
                  from the launch working directory.
   teleop_role    slave | master. Selects joint-position kp/kd profile.
-                 Default slave keeps the existing stiff tracking gains.
+                 Mainly kept for experimental force-feedback tuning.
+  teleop         true | false   (start UDP teleoperation bridge).
+  teleop_node_role
+                 slave | master. Selects this host's teleop role.
+  teleop_peer_host
+                 peer IP/hostname for UDP teleoperation.
   use_gui        true | false   (start MuJoCo mirror/target-editor panel).
 """
 
@@ -117,8 +122,9 @@ def generate_launch_description():
             'teleop_role',
             default_value='slave',
             description=(
-                'Joint-position gain profile: slave keeps current stiff '
-                'tracking gains; master loads softer force-feedback gains.'
+                'Joint-position gain profile kept mainly for experimental '
+                'force-feedback tuning; daily no_feedback teleop can keep '
+                'the default slave profile.'
             ),
             choices=['master', 'slave'],
         ),
@@ -135,6 +141,79 @@ def generate_launch_description():
             default_value='false',
             description='Start MuJoCo mirror/target-editor panel alongside real hardware control',
             choices=['true', 'false'],
+        ),
+        DeclareLaunchArgument(
+            'teleop',
+            default_value='false',
+            description='Start the UDP teleoperation bridge with real_robot.launch.py',
+            choices=['true', 'false'],
+        ),
+        DeclareLaunchArgument(
+            'teleop_node_role',
+            default_value='slave',
+            description="This host's teleop role: master or slave",
+            choices=['master', 'slave'],
+        ),
+        DeclareLaunchArgument(
+            'teleop_mode',
+            default_value='no_feedback',
+            description='Teleop mode: no_feedback or experimental force_feedback',
+            choices=['no_feedback', 'force_feedback'],
+        ),
+        DeclareLaunchArgument(
+            'teleop_peer_host',
+            default_value='',
+            description='Peer host IP address or hostname; required when teleop:=true',
+        ),
+        DeclareLaunchArgument(
+            'teleop_bind_host',
+            default_value='0.0.0.0',
+            description='Local UDP bind address for teleop',
+        ),
+        DeclareLaunchArgument(
+            'teleop_local_port',
+            default_value='15000',
+            description='Local UDP receive port for teleop',
+        ),
+        DeclareLaunchArgument(
+            'teleop_peer_port',
+            default_value='15001',
+            description='Peer UDP receive port for teleop',
+        ),
+        DeclareLaunchArgument(
+            'teleop_rate_hz',
+            default_value='50.0',
+            description='Teleop UDP state and command update rate',
+        ),
+        DeclareLaunchArgument(
+            'teleop_align_duration',
+            default_value='5.0',
+            description='Master-to-slave teleop alignment ramp duration, seconds',
+        ),
+        DeclareLaunchArgument(
+            'teleop_prepare_timeout',
+            default_value='30.0',
+            description='Seconds /teleop/prepare waits for peer UDP state',
+        ),
+        DeclareLaunchArgument(
+            'teleop_timeout',
+            default_value='0.3',
+            description='Peer UDP timeout before teleop auto-disable, seconds',
+        ),
+        DeclareLaunchArgument(
+            'teleop_max_start_error',
+            default_value='0.5',
+            description='Maximum joint error allowed when enabling teleop, rad',
+        ),
+        DeclareLaunchArgument(
+            'teleop_max_runtime_error',
+            default_value='1.0',
+            description='Maximum joint error allowed while teleop is enabled, rad',
+        ),
+        DeclareLaunchArgument(
+            'teleop_max_step',
+            default_value='0.03',
+            description='Maximum teleop commanded target change per cycle, rad',
         ),
     ]
 
@@ -174,4 +253,30 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_gui')),
     )
 
-    return LaunchDescription([*args, control_launch, gui_launch])
+    teleop_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('eiriarm_bringup'),
+                'launch',
+                'teleop.launch.py',
+            ]),
+        ),
+        launch_arguments={
+            'role': LaunchConfiguration('teleop_node_role'),
+            'mode': LaunchConfiguration('teleop_mode'),
+            'peer_host': LaunchConfiguration('teleop_peer_host'),
+            'bind_host': LaunchConfiguration('teleop_bind_host'),
+            'local_port': LaunchConfiguration('teleop_local_port'),
+            'peer_port': LaunchConfiguration('teleop_peer_port'),
+            'rate_hz': LaunchConfiguration('teleop_rate_hz'),
+            'align_duration': LaunchConfiguration('teleop_align_duration'),
+            'prepare_timeout': LaunchConfiguration('teleop_prepare_timeout'),
+            'timeout': LaunchConfiguration('teleop_timeout'),
+            'max_start_error': LaunchConfiguration('teleop_max_start_error'),
+            'max_runtime_error': LaunchConfiguration('teleop_max_runtime_error'),
+            'max_step': LaunchConfiguration('teleop_max_step'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('teleop')),
+    )
+
+    return LaunchDescription([*args, control_launch, gui_launch, teleop_launch])
