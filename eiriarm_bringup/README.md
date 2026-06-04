@@ -30,9 +30,20 @@
 
 ```bash
 cd ~/ros2_ws
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
 colcon build
 source install/setup.bash
 ```
+
+MuJoCo 相关包要求使用 MuJoCo `3.3.6` 的 C/C++ 头文件和动态库。仓库内期望路径为：
+
+```bash
+src/eiriarm_mujoco/third_party/mujoco/include
+src/eiriarm_mujoco/third_party/mujoco/lib/libmujoco.so.3.3.6
+```
+
+如果替换 MuJoCo 版本，需要保证 `third_party/mujoco/include`、`third_party/mujoco/lib` 和 `src/eiriarm_mujoco/CMakeLists.txt` 中链接的库版本一致。
 
 常用开发时可以只编译相关包：
 
@@ -538,6 +549,11 @@ ros2 launch eiriarm_bringup mujoco_panel.launch.py
 | `E` | 切到关节位置控制，冻结当前姿态，进入 slider 编辑 |
 | `S` | 下发当前 MuJoCo slider 姿态到 `/joint_position_command` |
 | `C` | 取消编辑，回到 mirror |
+| `T` | 遥操作准备；master 等待对端 UDP 状态并自动对齐到 slave 当前姿态 |
+| `Y` | enable/disable 遥操作；enable 请求会通过 UDP 同步给对端 |
+| `U` | 退出遥操作；两边停止遥操作并尽量恢复重力补偿 |
+
+`T/Y/U` 需要启动 `real_robot.launch.py teleop:=true`，否则面板会提示 `/teleop/*` 服务不可用。
 
 目标编辑流程：
 
@@ -868,9 +884,19 @@ ros2 topic pub --once /gripper_controller/left_gripper/command std_msgs/msg/Stri
 # 从臂夹爪目标比例，0.0=open，1.0=close
 ros2 topic pub --once /gripper_controller/left_gripper/teleop_target std_msgs/msg/Float32 "{data: 0.5}"
 
+# 实时比例控制测试，例如 50 Hz 连续下发
+ros2 topic pub -r 50 /gripper_controller/left_gripper/teleop_target std_msgs/msg/Float32 "{data: 0.5}"
+
 # 观察夹爪遥操作状态：[ratio, q_motor, velocity, torque, calibrated, state]
 ros2 topic echo /gripper_controller/left_gripper/teleop_state
 ```
+
+夹爪遥操作使用归一化开合比例：
+
+- `0.0` 表示本机标定得到的全开位置
+- `1.0` 表示本机标定得到的全闭位置
+- teleop bridge 会把主夹爪比例实时发给从夹爪
+- 从夹爪本地按 `teleop_track_kp`、`teleop_track_kd` 和 `teleop_track_max_step` 跟踪比例目标
 
 键盘控制：
 
